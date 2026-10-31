@@ -1,0 +1,9 @@
+---
+# role: nextcloud
+# file: vars/RedHat.yml
+
+__nextcloud_packages: [acl, bzip2, cronie, tar]
+__nextcloud_selinux_packages: [policycoreutils, policycoreutils-python-utils, python3-libselinux]
+__nextcloud_user: apache
+__nextcloud_group: apache
+__nextcloud_cron_service: crond

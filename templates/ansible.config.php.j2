@@ -1,0 +1,6 @@
+<?php
+// Managed by ansible.
+// file: {{ template_destpath }}
+$CONFIG = json_decode(base64_decode('{{ nextcloud_config | to_json | b64encode }}'), true, 512, JSON_THROW_ON_ERROR);
+$CONFIG['trusted_domains'] = json_decode(base64_decode('{{ nextcloud_trusted_domains | to_json | b64encode }}'), true, 512, JSON_THROW_ON_ERROR);
+$CONFIG['overwrite.cli.url'] = json_decode(base64_decode('{{ nextcloud_url | to_json | b64encode }}'), true, 512, JSON_THROW_ON_ERROR);

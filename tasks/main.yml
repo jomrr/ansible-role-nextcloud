@@ -1,0 +1,49 @@
+---
+# role: nextcloud
+# file: tasks/main.yml
+
+- name: NEXTCLOUD | Load platform settings
+  ansible.builtin.include_vars: "{{ lookup('ansible.builtin.first_found', __nextcloud_platform_files) }}"
+  vars:
+    __nextcloud_platform_files:
+      files:
+        - "{{ ansible_facts.os_family }}.yml"
+      paths:
+        - "{{ role_path }}/vars"
+
+- name: NEXTCLOUD | Validate deployment inputs
+  ansible.builtin.import_tasks: assert.yml
+
+- name: NEXTCLOUD | Install archive and scheduling tools
+  become: true
+  become_user: root
+  ansible.builtin.package:
+    name: "{{ __nextcloud_packages }}"
+    state: present
+
+- name: NEXTCLOUD | Install SELinux management tools
+  become: true
+  become_user: root
+  ansible.builtin.package:
+    name: "{{ __nextcloud_selinux_packages }}"
+    state: present
+  when: ansible_facts.selinux.status == 'enabled'
+
+- name: NEXTCLOUD | Inspect application entry point
+  become: true
+  become_user: root
+  ansible.builtin.stat:
+    path: "{{ nextcloud_install_dir }}/occ"
+  register: __nextcloud_occ
+
+- name: NEXTCLOUD | Install the latest verified application archive
+  ansible.builtin.import_tasks: install.yml
+  when:
+    - not __nextcloud_occ.stat.exists
+    - not ansible_check_mode
+
+- name: NEXTCLOUD | Initialize and configure the application
+  ansible.builtin.import_tasks: configure.yml
+  environment:
+    NEXTCLOUD_CONFIG_DIR: "{{ nextcloud_config_dir }}"
+  when: not ansible_check_mode or __nextcloud_occ.stat.exists

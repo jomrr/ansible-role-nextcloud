@@ -1,0 +1,153 @@
+---
+# role: nextcloud
+# file: molecule/default/molecule.yml
+
+dependency:
+  name: "galaxy"
+  options:
+    requirements-file: "${MOLECULE_PROJECT_DIRECTORY}/collections.yml"
+    role-file: "${MOLECULE_PROJECT_DIRECTORY}/requirements.yml"
+driver:
+  name: "podman"
+provisioner:
+  name: "ansible"
+  config_options:
+    defaults:
+      forks: 8
+      interpreter_python: "auto_silent"
+      callbacks_enabled: "ansible.posix.profile_tasks,ansible.posix.timer"
+      callback_result_format: "yaml"
+    connection:
+      pipelining: true
+  inventory:
+    group_vars:
+      all:
+        ansible_podman_mount_detection: false
+        nextcloud_trusted_domains:
+          - "localhost"
+          - "127.0.0.1"
+          - "cloud.example.test"
+        nextcloud_url: "https://cloud.example.test"
+        nextcloud_database_type: "mysql"
+        nextcloud_database_host: "127.0.0.1"
+        nextcloud_database_password: "molecule-database-password"
+        nextcloud_admin_password: "molecule-admin-password"
+        nextcloud_config:
+          default_phone_region: "DE"
+          maintenance_window_start: 1
+          debug: false
+        nextcloud_apps:
+          - "calendar"
+          - "files_external"
+        __nextcloud_test_webserver: "httpd"
+        __nextcloud_test_php_settings:
+          memory_limit: "512M"
+          opcache.enable: "1"
+          opcache.save_comments: "1"
+          opcache.validate_timestamps: "1"
+          opcache.revalidate_freq: "2"
+        __nextcloud_test_platform:
+          Debian:
+            user: "www-data"
+            group: "www-data"
+            cron: "cron"
+          RedHat:
+            user: "apache"
+            group: "apache"
+            cron: "crond"
+          Suse:
+            user: "wwwrun"
+            group: "www"
+            cron: "cron"
+        __nextcloud_test_php_packages:
+          Debian:
+            - "php-bz2"
+            - "php-curl"
+            - "php-gd"
+            - "php-mbstring"
+            - "php-xml"
+            - "php-zip"
+            - "php-intl"
+            - "php-bcmath"
+            - "php-gmp"
+            - "php-mysql"
+            - "php-pgsql"
+          RedHat:
+            - "php-gd"
+            - "php-process"
+            - "php-intl"
+            - "php-mbstring"
+            - "php-xml"
+            - "php-zip"
+            - "php-bcmath"
+            - "php-gmp"
+            - "php-mysqlnd"
+            - "php-pgsql"
+          Suse:
+            - "php8-bz2"
+            - "php8-curl"
+            - "php8-gd"
+            - "php8-intl"
+            - "php8-mbstring"
+            - "php8-mysql"
+            - "php8-pgsql"
+            - "php8-zip"
+            - "php8-bcmath"
+            - "php8-gmp"
+            - "php8-dom"
+            - "php8-fileinfo"
+            - "php8-openssl"
+            - "php8-ctype"
+            - "php8-iconv"
+            - "php8-posix"
+            - "php8-pcntl"
+            - "php8-xmlreader"
+            - "php8-xmlwriter"
+            - "php8-zlib"
+            - "php8-tokenizer"
+    host_vars:
+      fedora-latest-nextcloud:
+        nextcloud_database_type: "pgsql"
+        __nextcloud_test_webserver: "nginx"
+      ubuntu-latest-nextcloud:
+        nextcloud_database_type: "pgsql"
+        __nextcloud_test_webserver: "nginx"
+      opensuse-tumbleweed-latest-nextcloud:
+        nextcloud_database_type: "pgsql"
+        __nextcloud_test_webserver: "nginx"
+  log: true
+  playbooks:
+    prepare: "../resources/playbooks/prepare.yml"
+    converge: "../resources/playbooks/converge.yml"
+    verify: "../resources/playbooks/verify.yml"
+    side_effect: "../resources/playbooks/side_effect.yml"
+verifier:
+  name: "ansible"
+scenario:
+  test_sequence:
+    - "dependency"
+    - "destroy"
+    - "syntax"
+    - "create"
+    - "prepare"
+    - "check"
+    - "converge"
+    - "idempotence"
+    - "check"
+    - "verify"
+    - "side_effect"
+    - "converge"
+    - "idempotence"
+    - "verify"
+    - "destroy"
+  name: "default"
+platforms:
+  - name: "nextcloud"
+    image: "docker.io/${uns:-jomrr}/molecule-${img:-debian}:${tag:-latest}"
+    pre_build_image: true
+    override_command: false
+    systemd: "true"
+    capabilities:
+      - "SYS_ADMIN"
+    security_opts:
+      - "label=disable"

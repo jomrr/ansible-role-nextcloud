@@ -1,0 +1,332 @@
+---
+# role: nextcloud
+# file: molecule/resources/playbooks/prepare.yml
+
+- name: NEXTCLOUD | Prepare application dependencies with standalone roles
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: NEXTCLOUD | Resolve the TLS fixture hostname locally
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: 127.0.0.1 cloud.example.test
+        unsafe_writes: true
+
+    - name: NEXTCLOUD | Refresh APT package metadata
+      become: true
+      become_user: root
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: NEXTCLOUD | Refresh DNF package metadata
+      become: true
+      become_user: root
+      ansible.builtin.dnf:
+        update_cache: true
+      when: ansible_facts.pkg_mgr in ['dnf', 'dnf5']
+
+    - name: NEXTCLOUD | Refresh Zypper package metadata
+      become: true
+      become_user: root
+      community.general.zypper_repository:
+        repo: '*'
+        runrefresh: true
+      when: ansible_facts.pkg_mgr == 'zypper'
+
+    - name: NEXTCLOUD | Prepare PHP with the PHP role
+      ansible.builtin.include_role:
+        name: jomrr.php
+      vars:
+        php_extra_packages: "{{ __nextcloud_test_php_packages[ansible_facts.os_family] }}"
+        php_ini_settings: "{{ __nextcloud_test_php_settings }}"
+        php_fpm_pools:
+          - name: nextcloud
+            environment:
+              NEXTCLOUD_CONFIG_DIR: /etc/nextcloud
+            settings:
+              listen: 127.0.0.1:9000
+              php_admin_value[memory_limit]: "{{ __nextcloud_test_php_settings.memory_limit }}"
+
+    - name: NEXTCLOUD | Inspect PHP CLI configuration and OPcache availability
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/php
+          - -r
+          - 'echo json_encode(["scan_dir" => PHP_CONFIG_FILE_SCAN_DIR, "opcache" => extension_loaded("Zend OPcache")]);'
+      register: __nextcloud_test_cli_runtime
+      changed_when: false
+
+    - name: NEXTCLOUD | Install OPcache when it is not bundled with PHP
+      become: true
+      become_user: root
+      ansible.builtin.package:
+        name: "{{ 'php8-opcache' if ansible_facts.os_family == 'Suse' else 'php-opcache' }}"
+        state: present
+      when: not (__nextcloud_test_cli_runtime.stdout | from_json).opcache
+      notify: reload php-fpm
+
+    - name: NEXTCLOUD | Apply the same PHP settings to CLI background jobs
+      become: true
+      become_user: root
+      ansible.builtin.copy:
+        dest: "{{ (__nextcloud_test_cli_runtime.stdout | from_json).scan_dir }}/99-nextcloud-cli.ini"
+        content: |
+          ; Molecule fixture for the separately provisioned PHP CLI runtime.
+          {% for __nextcloud_php_key, __nextcloud_php_value in __nextcloud_test_php_settings.items() %}
+          {{ __nextcloud_php_key }} = {{ __nextcloud_php_value }}
+          {% endfor %}
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: NEXTCLOUD | Prepare external configuration access for confined PHP-FPM
+      when: ansible_facts.os_family == 'Suse'
+      block:
+        - name: NEXTCLOUD | Create the configuration mount point before restarting PHP-FPM
+          become: true
+          become_user: root
+          ansible.builtin.file:
+            path: /etc/nextcloud
+            state: directory
+            owner: wwwrun
+            group: www
+            mode: '0750'
+
+        - name: NEXTCLOUD | Create the PHP-FPM unit override directory
+          become: true
+          become_user: root
+          ansible.builtin.file:
+            path: /etc/systemd/system/php-fpm.service.d
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: NEXTCLOUD | Permit only the external configuration within the PHP-FPM sandbox
+          become: true
+          become_user: root
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/php-fpm.service.d/nextcloud.conf
+            content: |
+              [Service]
+              ReadWritePaths=/etc/nextcloud
+            owner: root
+            group: root
+            mode: '0644'
+          notify: NEXTCLOUD | Restart the confined PHP-FPM fixture
+
+    - name: NEXTCLOUD | Install the certificate fixture dependency
+      become: true
+      become_user: root
+      ansible.builtin.package:
+        name: python3-cryptography
+        state: present
+
+    - name: NEXTCLOUD | Create the certificate fixture directory
+      become: true
+      become_user: root
+      ansible.builtin.file:
+        path: /etc/nextcloud-test
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: NEXTCLOUD | Generate the disposable TLS key
+      become: true
+      become_user: root
+      community.crypto.openssl_privatekey:
+        path: /etc/nextcloud-test/server.key
+        type: ECC
+        curve: secp256r1
+        mode: '0600'
+
+    - name: NEXTCLOUD | Generate the disposable certificate request
+      become: true
+      become_user: root
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: /etc/nextcloud-test/server.key
+        common_name: cloud.example.test
+        subject_alt_name:
+          - DNS:cloud.example.test
+          - IP:127.0.0.1
+      register: __nextcloud_test_csr
+
+    - name: NEXTCLOUD | Issue the disposable TLS certificate
+      become: true
+      become_user: root
+      community.crypto.x509_certificate:
+        path: /etc/nextcloud-test/server.crt
+        privatekey_path: /etc/nextcloud-test/server.key
+        csr_content: "{{ __nextcloud_test_csr.csr }}"
+        provider: selfsigned
+        selfsigned_not_after: '+2d'
+        mode: '0644'
+
+    - name: NEXTCLOUD | Prepare MariaDB with the MariaDB role
+      ansible.builtin.include_role:
+        name: jomrr.mariadb
+      vars:
+        mariadb_databases:
+          - name: nextcloud
+        mariadb_users:
+          - name: nextcloud
+            host: 127.0.0.1
+            password: "{{ nextcloud_database_password }}"
+            priv: 'nextcloud.*:ALL'
+      when: nextcloud_database_type == 'mysql'
+
+    - name: NEXTCLOUD | Prepare PostgreSQL with the PostgreSQL role
+      ansible.builtin.include_role:
+        name: jomrr.postgresql
+      vars:
+        postgresql_shared_buffers: 128MB
+        postgresql_effective_cache_size: 256MB
+        postgresql_maintenance_work_mem: 64MB
+        postgresql_roles:
+          - name: nextcloud
+            role_attr_flags: LOGIN
+            password: "{{ nextcloud_database_password }}"
+        postgresql_databases:
+          - name: nextcloud
+            owner: nextcloud
+            encoding: UTF8
+      when: nextcloud_database_type == 'pgsql'
+
+  handlers:
+    - name: NEXTCLOUD | Restart the confined PHP-FPM fixture
+      become: true
+      become_user: root
+      ansible.builtin.systemd_service:
+        name: php-fpm
+        daemon_reload: true
+        state: restarted
+
+- name: NEXTCLOUD | Prepare the Apache fixture
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: NEXTCLOUD | Prepare Apache with the HTTPD role
+      ansible.builtin.include_role:
+        name: jomrr.httpd
+      vars:
+        httpd_listen:
+          - port: 80
+          - port: 443
+            protocol: https
+        httpd_extra_modules:
+          - name: proxy_module
+            file: mod_proxy.so
+          - name: proxy_fcgi_module
+            file: mod_proxy_fcgi.so
+          - name: rewrite_module
+            file: mod_rewrite.so
+          - name: headers_module
+            file: mod_headers.so
+        httpd_vhost_files:
+          - name: 100-nextcloud.conf
+            content: |-
+              <VirtualHost *:80>
+                  ServerName cloud.example.test
+                  ServerAlias localhost 127.0.0.1
+                  Redirect permanent / https://cloud.example.test/
+              </VirtualHost>
+              <VirtualHost *:443>
+                  ServerName cloud.example.test
+                  ServerAlias localhost 127.0.0.1
+                  SSLEngine on
+                  SSLCertificateFile /etc/nextcloud-test/server.crt
+                  SSLCertificateKeyFile /etc/nextcloud-test/server.key
+                  Header always set Strict-Transport-Security "max-age=15552000"
+                  Header always set X-Content-Type-Options "nosniff"
+                  Header always set X-Robots-Tag "noindex, nofollow"
+                  Header always set X-Frame-Options "SAMEORIGIN"
+                  Header always set Referrer-Policy "no-referrer"
+                  DocumentRoot /var/www/nextcloud
+                  <Directory /var/www/nextcloud>
+                      Require all granted
+                      AllowOverride All
+                      Options FollowSymLinks
+                  </Directory>
+                  <FilesMatch "\.php$">
+                      SetHandler "proxy:fcgi://127.0.0.1:9000"
+                      ProxyFCGISetEnvIf "true" !PATH_TRANSLATED
+                  </FilesMatch>
+                  <Directory /var/www/nextcloud/config>
+                      Require all denied
+                  </Directory>
+              </VirtualHost>
+      when: __nextcloud_test_webserver == 'httpd'
+
+- name: NEXTCLOUD | Prepare the nginx fixture
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: NEXTCLOUD | Prepare nginx with the nginx role
+      ansible.builtin.include_role:
+        name: jomrr.nginx
+      vars:
+        nginx_listen:
+          - address: 0.0.0.0
+            port: 80
+            protocol: http
+          - address: 0.0.0.0
+            port: 443
+            protocol: https
+        nginx_http2: false
+        nginx_security_headers:
+          Strict-Transport-Security: max-age=15552000
+          X-Content-Type-Options: nosniff
+          X-Robots-Tag: noindex, nofollow
+          X-Frame-Options: SAMEORIGIN
+          Referrer-Policy: no-referrer
+        nginx_vhosts:
+          - name: nextcloud
+            config: |-
+              server {
+                  listen 80;
+                  server_name cloud.example.test localhost 127.0.0.1;
+                  return 301 https://cloud.example.test$request_uri;
+              }
+              server {
+                  listen 443 ssl;
+                  server_name cloud.example.test localhost 127.0.0.1;
+                  ssl_certificate /etc/nextcloud-test/server.crt;
+                  ssl_certificate_key /etc/nextcloud-test/server.key;
+                  root /var/www/nextcloud;
+                  index index.php;
+                  location ~ ^/(config|data|lib|3rdparty)/ { return 404; }
+                  location ~ /\. { return 404; }
+                  location ~ ^/(index|status|remote|public|cron)\.php(?:/|$) {
+                      fastcgi_split_path_info ^(.+?\.php)(/.*)$;
+                      include /etc/nginx/fastcgi_params;
+                      fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                      fastcgi_param PATH_INFO $fastcgi_path_info;
+                      fastcgi_param HTTPS on;
+                      fastcgi_pass 127.0.0.1:9000;
+                  }
+                  location / { try_files $uri $uri/ /index.php$request_uri; }
+              }
+      when: __nextcloud_test_webserver == 'nginx'
+
+    - name: NEXTCLOUD | Allow nginx to read PHP-owned application files
+      become: true
+      become_user: root
+      ansible.builtin.user:
+        name: nginx
+        groups: "{{ __nextcloud_test_platform[ansible_facts.os_family].group }}"
+        append: true
+      when:
+        - __nextcloud_test_webserver == 'nginx'
+        - ansible_facts.os_family != 'Debian'
+      notify: NEXTCLOUD | Restart the nginx fixture
+  handlers:
+    - name: NEXTCLOUD | Restart the nginx fixture
+      become: true
+      become_user: root
+      ansible.builtin.service:
+        name: nginx
+        state: restarted

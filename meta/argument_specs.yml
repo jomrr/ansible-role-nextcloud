@@ -1,0 +1,150 @@
+---
+# role: nextcloud
+# file: meta/argument_specs.yml
+
+argument_specs:
+  main:
+    short_description: Install Nextcloud from its verified release archive and configure
+      an application on a prepared PHP and database stack.
+    options:
+      nextcloud_install_dir:
+        type: path
+        default: /var/www/nextcloud
+        description:
+          - Absolute application directory; configure the webserver document root separately.
+      nextcloud_data_dir:
+        type: path
+        default: /srv/www/nextcloud
+        description:
+          - Absolute data directory outside the application document root; selected during
+            initial installation.
+          - Changing this input does not migrate stored data or change an initialized instance.
+          - The role persists httpd_sys_rw_content_t for this path when SELinux is enabled.
+      nextcloud_config_dir:
+        type: path
+        default: /etc/nextcloud
+        description:
+          - Configuration directory outside the application and data directories, containing
+            config.php and ansible.config.php.
+          - Configure NEXTCLOUD_CONFIG_DIR with this path in the PHP web runtime; the role
+            supplies it to occ and cron.
+          - Choose this path before installation; the role does not relocate an initialized
+            instance.
+      nextcloud_user:
+        type: str
+        default: ''
+        description:
+          - Existing PHP runtime account used for application ownership, occ and background
+            jobs.
+          - Empty selects www-data on Debian and Ubuntu, apache on AlmaLinux and Fedora,
+            or wwwrun on openSUSE.
+      nextcloud_group:
+        type: str
+        default: ''
+        description:
+          - Existing group shared by the PHP runtime and webserver for application file
+            access.
+          - Empty selects www-data on Debian and Ubuntu, apache on AlmaLinux and Fedora,
+            or www on openSUSE.
+      nextcloud_php_binary:
+        type: path
+        default: /usr/bin/php
+        description:
+          - Absolute PHP CLI executable with the same version and required extensions as
+            the web runtime.
+      nextcloud_sebooleans:
+        type: dict
+        default:
+          httpd_unified: false
+        description:
+          - Mapping of SELinux boolean names to boolean states, applied persistently when
+            SELinux is enabled.
+          - The default prohibits unified webroot writes; additional network and storage
+            permissions require explicit entries.
+          - These settings affect all processes covered by the host HTTP policy; only listed
+            booleans are managed.
+          - Override the complete mapping for the services in use; an empty mapping leaves
+            booleans unchanged.
+      nextcloud_database_type:
+        type: str
+        default: mysql
+        choices:
+          - mysql
+          - pgsql
+        description:
+          - Database engine used during initial installation; mysql includes MariaDB.
+      nextcloud_database_host:
+        type: str
+        default: localhost
+        description:
+          - Database host, optionally with a port or socket, used during initial installation.
+          - Remote connections require a separately secured network or database transport.
+      nextcloud_database_name:
+        type: str
+        default: nextcloud
+        description:
+          - Prepared empty database used during initial installation.
+      nextcloud_database_user:
+        type: str
+        default: nextcloud
+        description:
+          - Prepared account with full privileges on the Nextcloud database.
+      nextcloud_database_password:
+        type: str
+        required: true
+        no_log: true
+        description:
+          - Initial database password supplied through Vault or another secret store.
+          - Must be nonempty without newlines or leading or trailing whitespace; later runs
+            do not rotate it.
+      nextcloud_admin_user:
+        type: str
+        default: admin
+        description:
+          - Administrator account created during initial installation; later runs do not
+            rename it.
+      nextcloud_admin_password:
+        type: str
+        required: true
+        no_log: true
+        description:
+          - Initial administrator password supplied through Vault or another secret store.
+          - Must be nonempty without newlines or leading or trailing whitespace; later runs
+            do not reset it.
+      nextcloud_trusted_domains:
+        type: list
+        elements: str
+        required: true
+        description:
+          - Nonempty list of accepted hostnames or IP addresses, optionally with ports,
+            without wildcards or URL paths.
+          - The managed configuration replaces the complete trusted_domains list.
+      nextcloud_url:
+        type: str
+        required: true
+        description:
+          - Public HTTPS base URL used for links generated by background jobs; configure
+            TLS separately.
+      nextcloud_config:
+        type: dict
+        default:
+          debug: false
+        no_log: true
+        description:
+          - Additional Nextcloud system settings using JSON-compatible values, including
+            Redis, mail and proxy settings.
+          - Bootstrap identity, database connection, data directory, trusted_domains and
+            overwrite.cli.url keys are reserved.
+          - Values are literal data and cannot contain executable PHP; output and diffs
+            are suppressed.
+      nextcloud_apps:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Unique App Store identifiers to install and keep enabled, for example calendar
+            or contacts.
+          - Missing apps are installed, disabled apps are enabled and enabled apps remain
+            unchanged.
+          - Unlisted apps are preserved; removing an entry does not uninstall it. App upgrades
+            remain separately managed.

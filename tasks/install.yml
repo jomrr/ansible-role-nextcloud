@@ -1,0 +1,48 @@
+---
+# role: nextcloud
+# file: tasks/install.yml
+
+- name: NEXTCLOUD | Create the private download directory
+  become: true
+  become_user: root
+  ansible.builtin.file:
+    path: /var/cache/nextcloud
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: NEXTCLOUD | Download the latest archive and verify SHA-256
+  become: true
+  become_user: root
+  ansible.builtin.get_url:
+    url: https://download.nextcloud.com/server/releases/latest.tar.bz2
+    checksum: sha256:https://download.nextcloud.com/server/releases/latest.tar.bz2.sha256
+    dest: /var/cache/nextcloud/latest.tar.bz2
+    owner: root
+    group: root
+    mode: '0600'
+    timeout: 120
+
+- name: NEXTCLOUD | Create the application directory
+  become: true
+  become_user: root
+  ansible.builtin.file:
+    path: "{{ nextcloud_install_dir }}"
+    state: directory
+    owner: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+    group: "{{ nextcloud_group | default(__nextcloud_group, true) }}"
+    mode: '0750'
+
+- name: NEXTCLOUD | Extract the verified archive
+  become: true
+  become_user: root
+  ansible.builtin.unarchive:
+    src: /var/cache/nextcloud/latest.tar.bz2
+    dest: "{{ nextcloud_install_dir }}"
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+    owner: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+    group: "{{ nextcloud_group | default(__nextcloud_group, true) }}"
+    mode: u=rwX,g=rX,o=

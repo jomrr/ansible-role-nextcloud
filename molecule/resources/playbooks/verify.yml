@@ -1,0 +1,199 @@
+---
+# role: nextcloud
+# file: molecule/resources/playbooks/verify.yml
+
+- name: NEXTCLOUD | Verify the installed application
+  hosts: all
+  gather_facts: true
+  environment:
+    NEXTCLOUD_CONFIG_DIR: /etc/nextcloud
+  tasks:
+    - name: NEXTCLOUD | Read the public application status
+      ansible.builtin.uri:
+        ca_path: /etc/nextcloud-test/server.crt
+        url: https://cloud.example.test/status.php
+        return_content: true
+      register: __nextcloud_test_status
+
+    - name: NEXTCLOUD | Verify completed installation
+      ansible.builtin.assert:
+        that:
+          - __nextcloud_test_status.json.installed
+          - not __nextcloud_test_status.json.maintenance
+          - not __nextcloud_test_status.json.needsDbUpgrade
+          - __nextcloud_test_status.json.version | length > 0
+        quiet: true
+
+    - name: NEXTCLOUD | Read effective settings through occ
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/php
+          - /var/www/nextcloud/occ
+          - config:list
+          - --output=json
+          - --private
+      register: __nextcloud_test_config
+      changed_when: false
+      no_log: true
+
+    - name: NEXTCLOUD | Verify effective application settings
+      ansible.builtin.assert:
+        that:
+          - (__nextcloud_test_config.stdout | from_json).system.trusted_domains == nextcloud_trusted_domains
+          - (__nextcloud_test_config.stdout | from_json).system['overwrite.cli.url'] == nextcloud_url
+          - (__nextcloud_test_config.stdout | from_json).system.default_phone_region == 'DE'
+          - (__nextcloud_test_config.stdout | from_json).system.maintenance_window_start == 1
+          - (__nextcloud_test_config.stdout | from_json).system.datadirectory == '/srv/www/nextcloud'
+          - (__nextcloud_test_config.stdout | from_json).system.dbtype == nextcloud_database_type
+          - (__nextcloud_test_config.stdout | from_json).apps.core.backgroundjobs_mode == 'cron'
+          - not (__nextcloud_test_config.stdout | from_json).system.debug
+        quiet: true
+
+    - name: NEXTCLOUD | Verify HTTP redirects to HTTPS
+      ansible.builtin.uri:
+        ca_path: /etc/nextcloud-test/server.crt
+        url: http://127.0.0.1/status.php
+        follow_redirects: none
+        status_code: 301
+
+    - name: NEXTCLOUD | Verify sensitive paths cannot be downloaded
+      ansible.builtin.uri:
+        url: "https://cloud.example.test/{{ __nextcloud_test_private_path }}"
+        ca_path: /etc/nextcloud-test/server.crt
+        status_code: [403, 404]
+      loop:
+        - config/config.php
+        - config/ansible.config.php
+        - data/.ncdata
+      loop_control:
+        loop_var: __nextcloud_test_private_path
+        label: "{{ __nextcloud_test_private_path }}"
+
+    - name: NEXTCLOUD | Read static content security headers
+      ansible.builtin.uri:
+        url: https://cloud.example.test/core/img/logo/logo.svg
+        ca_path: /etc/nextcloud-test/server.crt
+      register: __nextcloud_test_headers
+
+    - name: NEXTCLOUD | Verify webserver security headers
+      ansible.builtin.assert:
+        that:
+          - "'max-age=15552000' in __nextcloud_test_headers.strict_transport_security"
+          - __nextcloud_test_headers.x_content_type_options == 'nosniff'
+          - __nextcloud_test_headers.x_frame_options == 'SAMEORIGIN'
+          - __nextcloud_test_headers.referrer_policy == 'no-referrer'
+        quiet: true
+
+    - name: NEXTCLOUD | Verify administrator authentication and WebDAV
+      ansible.builtin.uri:
+        ca_path: /etc/nextcloud-test/server.crt
+        url: https://cloud.example.test/remote.php/dav/files/admin/
+        method: PROPFIND
+        user: admin
+        password: "{{ nextcloud_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Depth: '0'
+        status_code: 207
+      no_log: true
+
+    - name: NEXTCLOUD | Read the installed app state
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv: [/usr/bin/php, /var/www/nextcloud/occ, 'app:list', '--output=json']
+      register: __nextcloud_test_apps
+      changed_when: false
+
+    - name: NEXTCLOUD | Verify requested and unrelated apps remain enabled
+      ansible.builtin.assert:
+        that:
+          - "'calendar' in (__nextcloud_test_apps.stdout | from_json).enabled"
+          - "'files_external' in (__nextcloud_test_apps.stdout | from_json).enabled"
+          - "'files' in (__nextcloud_test_apps.stdout | from_json).enabled"
+        quiet: true
+
+    - name: NEXTCLOUD | Inspect the saved configuration from before reconvergence
+      become: true
+      become_user: root
+      ansible.builtin.stat:
+        path: /tmp/nextcloud-config-before.php
+      register: __nextcloud_test_saved_config
+
+    - name: NEXTCLOUD | Verify uploaded data survived reconvergence
+      ansible.builtin.uri:
+        ca_path: /etc/nextcloud-test/server.crt
+        url: https://cloud.example.test/remote.php/dav/files/admin/preserved.txt
+        user: admin
+        password: "{{ nextcloud_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: __nextcloud_test_preserved_data
+      no_log: true
+      when: __nextcloud_test_saved_config.stat.exists
+
+    - name: NEXTCLOUD | Verify preserved file content
+      ansible.builtin.assert:
+        that:
+          - __nextcloud_test_preserved_data.content == 'Preserve this user document across role runs.'
+        quiet: true
+      when: __nextcloud_test_saved_config.stat.exists
+
+    - name: NEXTCLOUD | Execute background jobs
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/php
+          - -f
+          - /var/www/nextcloud/cron.php
+      changed_when: false
+
+    - name: NEXTCLOUD | Read protected configuration metadata
+      become: true
+      become_user: root
+      ansible.builtin.stat:
+        path: /etc/nextcloud/config.php
+      register: __nextcloud_test_config_file
+
+    - name: NEXTCLOUD | Verify configuration protection
+      ansible.builtin.assert:
+        that:
+          - __nextcloud_test_config_file.stat.mode == '0640'
+          - __nextcloud_test_config_file.stat.pw_name == __nextcloud_test_platform[ansible_facts.os_family].user
+        quiet: true
+
+    - name: NEXTCLOUD | Verify bootstrap configuration survived reconvergence
+      ansible.builtin.assert:
+        that:
+          - __nextcloud_test_config_file.stat.checksum == __nextcloud_test_saved_config.stat.checksum
+        quiet: true
+      when: __nextcloud_test_saved_config.stat.exists
+
+    - name: NEXTCLOUD | Read the scheduled job
+      become: true
+      become_user: root
+      ansible.builtin.slurp:
+        src: /etc/cron.d/nextcloud
+      register: __nextcloud_test_cron
+
+    - name: NEXTCLOUD | Verify the scheduled application command
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('*/5 * * * * ' ~ __nextcloud_test_platform[ansible_facts.os_family].user
+            ~ ' NEXTCLOUD_CONFIG_DIR=/etc/nextcloud'
+            ~ ' /usr/bin/php -f /var/www/nextcloud/cron.php') in __nextcloud_test_cron.content | b64decode
+        quiet: true
+
+    - name: NEXTCLOUD | Inspect scheduler state
+      ansible.builtin.service_facts:
+
+    - name: NEXTCLOUD | Verify scheduler availability
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services[__nextcloud_test_platform[ansible_facts.os_family].cron ~ '.service'].state == 'running'
+          - ansible_facts.services[__nextcloud_test_platform[ansible_facts.os_family].cron ~ '.service'].status == 'enabled'
+        quiet: true

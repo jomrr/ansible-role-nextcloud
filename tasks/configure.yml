@@ -1,0 +1,98 @@
+---
+# role: nextcloud
+# file: tasks/configure.yml
+
+- name: NEXTCLOUD | Create the private configuration directory
+  become: true
+  become_user: root
+  ansible.builtin.file:
+    path: "{{ nextcloud_config_dir }}"
+    state: directory
+    owner: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+    group: "{{ nextcloud_group | default(__nextcloud_group, true) }}"
+    mode: '0750'
+
+- name: NEXTCLOUD | Create the private data directory
+  become: true
+  become_user: root
+  ansible.builtin.file:
+    path: "{{ nextcloud_data_dir }}"
+    state: directory
+    owner: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+    group: "{{ nextcloud_group | default(__nextcloud_group, true) }}"
+    mode: '0750'
+
+- name: NEXTCLOUD | Apply persistent SELinux file contexts
+  ansible.builtin.import_tasks: selinux.yml
+  when: ansible_facts.selinux.status == 'enabled'
+
+- name: NEXTCLOUD | Read installation status
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - status
+      - --output=json
+      - --no-warnings
+  register: __nextcloud_status
+  changed_when: false
+  check_mode: false
+
+- name: NEXTCLOUD | Reject pending database upgrades
+  ansible.builtin.assert:
+    that:
+      - not (__nextcloud_status.stdout | from_json).needsDbUpgrade
+    quiet: true
+    fail_msg: Complete the Nextcloud upgrade before applying this installation role.
+
+- name: NEXTCLOUD | Initialize Nextcloud with the prepared database
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - maintenance:install
+      - "--database={{ nextcloud_database_type }}"
+      - "--database-host={{ nextcloud_database_host }}"
+      - "--database-name={{ nextcloud_database_name }}"
+      - "--database-user={{ nextcloud_database_user }}"
+      - "--admin-user={{ nextcloud_admin_user }}"
+      - "--data-dir={{ nextcloud_data_dir }}"
+    stdin: "{{ nextcloud_database_password }}\n{{ nextcloud_admin_password }}"
+  changed_when: true
+  no_log: true
+  when: not (__nextcloud_status.stdout | from_json).installed
+
+- name: NEXTCLOUD | Protect the application-owned configuration
+  become: true
+  become_user: root
+  ansible.builtin.file:
+    path: "{{ nextcloud_config_dir }}/config.php"
+    owner: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+    group: "{{ nextcloud_group | default(__nextcloud_group, true) }}"
+    mode: '0640'
+  when: not ansible_check_mode or (__nextcloud_status.stdout | from_json).installed
+
+- name: NEXTCLOUD | Render managed system settings
+  become: true
+  become_user: root
+  ansible.builtin.template:
+    src: ansible.config.php.j2
+    dest: "{{ nextcloud_config_dir }}/ansible.config.php"
+    owner: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+    group: "{{ nextcloud_group | default(__nextcloud_group, true) }}"
+    mode: '0640'
+    backup: true
+    validate: "{{ nextcloud_php_binary }} -l %s"
+  no_log: true
+
+- name: NEXTCLOUD | Configure background jobs
+  ansible.builtin.import_tasks: cron.yml
+  when: not ansible_check_mode or (__nextcloud_status.stdout | from_json).installed
+
+- name: NEXTCLOUD | Install and enable requested apps
+  ansible.builtin.import_tasks: apps.yml
+  when: not ansible_check_mode or (__nextcloud_status.stdout | from_json).installed

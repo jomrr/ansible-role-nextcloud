@@ -1,0 +1,9 @@
+---
+# role: nextcloud
+# file: vars/Suse.yml
+
+__nextcloud_packages: [acl, bzip2, cron, tar]
+__nextcloud_selinux_packages: [policycoreutils, policycoreutils-python-utils, python3-selinux]
+__nextcloud_user: wwwrun
+__nextcloud_group: www
+__nextcloud_cron_service: cron

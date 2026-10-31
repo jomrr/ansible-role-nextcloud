@@ -1,0 +1,50 @@
+---
+# role: nextcloud
+# file: tasks/cron.yml
+
+- name: NEXTCLOUD | Read background job mode
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - config:app:get
+      - core
+      - backgroundjobs_mode
+      - --default-value=ajax
+      - --no-warnings
+  register: __nextcloud_background_mode
+  changed_when: false
+  check_mode: false
+
+- name: NEXTCLOUD | Select cron background jobs
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - background:cron
+  changed_when: true
+  when: __nextcloud_background_mode.stdout != 'cron'
+
+- name: NEXTCLOUD | Schedule background jobs every five minutes
+  become: true
+  become_user: root
+  ansible.builtin.cron:
+    name: Nextcloud background jobs
+    cron_file: nextcloud
+    user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+    minute: '*/5'
+    job: >-
+      NEXTCLOUD_CONFIG_DIR={{ nextcloud_config_dir | quote }}
+      {{ nextcloud_php_binary | quote }} -f {{ (nextcloud_install_dir ~ '/cron.php') | quote }}
+
+- name: NEXTCLOUD | Enable and start the scheduler
+  become: true
+  become_user: root
+  ansible.builtin.service:
+    name: "{{ __nextcloud_cron_service }}"
+    enabled: true
+    state: started

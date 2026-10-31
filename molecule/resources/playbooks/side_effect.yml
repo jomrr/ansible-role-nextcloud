@@ -1,0 +1,88 @@
+---
+# role: nextcloud
+# file: molecule/resources/playbooks/side_effect.yml
+
+- name: NEXTCLOUD | Change managed application state
+  hosts: all
+  gather_facts: true
+  environment:
+    NEXTCLOUD_CONFIG_DIR: /etc/nextcloud
+  tasks:
+    - name: NEXTCLOUD | Upload a user document before reconvergence
+      ansible.builtin.uri:
+        ca_path: /etc/nextcloud-test/server.crt
+        url: https://cloud.example.test/remote.php/dav/files/admin/preserved.txt
+        method: PUT
+        user: admin
+        password: "{{ nextcloud_admin_password }}"
+        force_basic_auth: true
+        body: Preserve this user document across role runs.
+        status_code: 201
+      no_log: true
+
+    - name: NEXTCLOUD | Save bootstrap configuration before reconvergence
+      become: true
+      become_user: root
+      ansible.builtin.copy:
+        src: /etc/nextcloud/config.php
+        dest: /tmp/nextcloud-config-before.php
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: NEXTCLOUD | Disable a requested app
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv: [/usr/bin/php, /var/www/nextcloud/occ, 'app:disable', files_external]
+      changed_when: true
+
+    - name: NEXTCLOUD | Remove a requested app without its data
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv: [/usr/bin/php, /var/www/nextcloud/occ, 'app:remove', --keep-data, calendar]
+      changed_when: true
+
+    - name: NEXTCLOUD | Change the managed configuration fragment
+      become: true
+      become_user: root
+      ansible.builtin.copy:
+        dest: /etc/nextcloud/ansible.config.php
+        content: "<?php\n$CONFIG = ['trusted_domains' => ['localhost']];\n"
+        owner: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+        group: "{{ __nextcloud_test_platform[ansible_facts.os_family].group }}"
+        mode: '0640'
+
+    - name: NEXTCLOUD | Switch background jobs to AJAX
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/php
+          - /var/www/nextcloud/occ
+          - background:ajax
+      changed_when: true
+
+    - name: NEXTCLOUD | Remove the cron entry
+      become: true
+      become_user: root
+      ansible.builtin.file:
+        path: /etc/cron.d/nextcloud
+        state: absent
+
+    - name: NEXTCLOUD | Stop and disable the scheduler
+      become: true
+      become_user: root
+      ansible.builtin.service:
+        name: "{{ __nextcloud_test_platform[ansible_facts.os_family].cron }}"
+        enabled: false
+        state: stopped
+
+    - name: NEXTCLOUD | Relax configuration permissions
+      become: true
+      become_user: root
+      ansible.builtin.file:
+        path: /etc/nextcloud/config.php
+        mode: '0644'

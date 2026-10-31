@@ -1,0 +1,53 @@
+---
+# role: nextcloud
+# file: tasks/apps.yml
+
+- name: NEXTCLOUD | Read installed and enabled apps
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - app:list
+      - --output=json
+      - --no-warnings
+  register: __nextcloud_apps
+  changed_when: false
+  check_mode: false
+
+- name: NEXTCLOUD | Install missing apps
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - app:install
+      - "{{ __nextcloud_app }}"
+      - --no-interaction
+  changed_when: true
+  loop: "{{ nextcloud_apps }}"
+  loop_control:
+    loop_var: __nextcloud_app
+    label: "{{ __nextcloud_app }}"
+  when:
+    - __nextcloud_app not in (__nextcloud_apps.stdout | from_json).enabled
+    - __nextcloud_app not in (__nextcloud_apps.stdout | from_json).disabled
+
+- name: NEXTCLOUD | Enable installed apps
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - app:enable
+      - "{{ __nextcloud_app }}"
+      - --no-interaction
+  changed_when: true
+  loop: "{{ nextcloud_apps }}"
+  loop_control:
+    loop_var: __nextcloud_app
+    label: "{{ __nextcloud_app }}"
+  when: __nextcloud_app in (__nextcloud_apps.stdout | from_json).disabled

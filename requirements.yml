@@ -1,0 +1,25 @@
+---
+# role: nextcloud
+# file: requirements.yml
+
+roles:
+  - name: jomrr.php
+    src: https://github.com/jomrr/ansible-role-php.git
+    scm: git
+    version: main
+  - name: jomrr.httpd
+    src: https://github.com/jomrr/ansible-role-httpd.git
+    scm: git
+    version: main
+  - name: jomrr.nginx
+    src: https://github.com/jomrr/ansible-role-nginx.git
+    scm: git
+    version: main
+  - name: jomrr.mariadb
+    src: https://github.com/jomrr/ansible-role-mariadb.git
+    scm: git
+    version: main
+  - name: jomrr.postgresql
+    src: https://github.com/jomrr/ansible-role-postgresql.git
+    scm: git
+    version: main

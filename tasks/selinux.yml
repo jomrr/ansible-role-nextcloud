@@ -1,0 +1,52 @@
+---
+# role: nextcloud
+# file: tasks/selinux.yml
+
+- name: NEXTCLOUD | Apply persistent SELinux permissions
+  become: true
+  become_user: root
+  ansible.posix.seboolean:
+    name: "{{ __nextcloud_seboolean.key }}"
+    state: "{{ __nextcloud_seboolean.value }}"
+    persistent: true
+  loop: "{{ nextcloud_sebooleans | dict2items }}"
+  loop_control:
+    loop_var: __nextcloud_seboolean
+    label: "{{ __nextcloud_seboolean.key }}"
+
+- name: NEXTCLOUD | Register application and writable data contexts
+  become: true
+  become_user: root
+  community.general.sefcontext:
+    target: "{{ __nextcloud_context.target }}"
+    setype: "{{ __nextcloud_context.setype }}"
+    state: present
+  loop:
+    - target: "{{ nextcloud_install_dir | regex_escape }}(/.*)?"
+      setype: httpd_sys_content_t
+    - target: "{{ nextcloud_install_dir | regex_escape }}/(config|apps)(/.*)?"
+      setype: httpd_sys_rw_content_t
+    - target: "{{ nextcloud_install_dir | regex_escape }}/\\.(htaccess|user\\.ini)"
+      setype: httpd_sys_rw_content_t
+    - target: "{{ nextcloud_install_dir | regex_escape }}/3rdparty/aws/aws-sdk-php/src/data/logs(/.*)?"
+      setype: httpd_sys_rw_content_t
+    - target: "{{ nextcloud_data_dir | regex_escape }}(/.*)?"
+      setype: httpd_sys_rw_content_t
+    - target: "{{ nextcloud_config_dir | regex_escape }}(/.*)?"
+      setype: httpd_sys_rw_content_t
+  loop_control:
+    loop_var: __nextcloud_context
+    label: "{{ __nextcloud_context.target }}"
+
+- name: NEXTCLOUD | Restore application and data labels
+  become: true
+  become_user: root
+  ansible.builtin.command:
+    argv:
+      - restorecon
+      - -Rv
+      - "{{ nextcloud_install_dir }}"
+      - "{{ nextcloud_data_dir }}"
+      - "{{ nextcloud_config_dir }}"
+  register: __nextcloud_restorecon
+  changed_when: __nextcloud_restorecon.stdout | length > 0
