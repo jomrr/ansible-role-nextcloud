@@ -388,62 +388,43 @@ handling requests; there are no service restart handlers.
 
 ## Security Notes
 
-- SHA-256 verification and HTTPS certificate validation are mandatory. A
-  checksum mismatch stops installation before extraction. The checksum is
-  fetched from the same publisher as the archive; this is not independent
-  signature verification.
-- Installation passwords travel through standard input instead of command
-  arguments. Secret-bearing operations suppress logs and diffs. Passwords must
-  be nonempty single lines without leading or trailing whitespace because the
-  installer trims input.
+- Installation passwords must be nonempty single lines without leading or
+  trailing whitespace because the installer trims input.
 - Application files are readable by the runtime group and inaccessible to other
   users. Configuration files use mode 0640 and the data directory uses mode
   0750. Additional configuration, including secrets, is readable by the PHP
   runtime group.
 - The default data directory is /srv/www/nextcloud, separate from the
-  application at /var/www/nextcloud. Path selection alone does not guarantee
-  SELinux write access: enabled hosts receive persistent httpd_sys_rw_content_t
-  labels for writable paths.
-- Keep SELinux enforcing. The default nextcloud_sebooleans disables
-  httpd_unified and leaves other booleans unchanged. Configure
-  httpd_can_network_connect_db for TCP databases and httpd_can_network_connect
-  when external connections are required. These permissions affect the host HTTP
-  policy, including other applications; include only those needed by your
-  deployment. Optional entries include httpd_can_connect_ldap,
-  httpd_can_sendmail, httpd_use_cifs, httpd_use_nfs and httpd_use_fusefs. With
-  unrestricted outbound connections disabled, Redis may need
-  httpd_can_network_memcache. Preserve httpd_unified=false in overrides.
+  application at /var/www/nextcloud. SELinux-enabled hosts receive persistent
+  httpd_sys_rw_content_t labels for writable paths.
+- The default nextcloud_sebooleans disables httpd_unified and leaves other
+  booleans unchanged. Configure httpd_can_network_connect_db for TCP databases
+  and httpd_can_network_connect when external connections are required. These
+  permissions affect the host HTTP policy, including other applications; include
+  only those needed by your deployment. Optional entries include
+  httpd_can_connect_ldap, httpd_can_sendmail, httpd_use_cifs, httpd_use_nfs and
+  httpd_use_fusefs. With unrestricted outbound connections disabled, Redis may
+  need httpd_can_network_memcache. Preserve httpd_unified=false in overrides.
   Application files receive a read-only content label; write labels cover apps,
   configuration, data, .htaccess, .user.ini and AWS SDK logs.
-- Configuration defaults to /etc/nextcloud outside the webroot. Keep debug
-  disabled. PHP must retain access to /dev/urandom, including when open_basedir
-  is used. Preserve operating-system confinement and restrict network access to
-  required services.
-- Use a dedicated HTTPS hostname, redirect HTTP and configure HSTS with at least
-  15552000 seconds. Choose includeSubDomains and preload only after evaluating
-  their impact. Disable HTTP compression and enforce Nextcloud's security
-  headers on static responses too.
+- Configuration defaults to /etc/nextcloud outside the webroot. PHP must retain
+  access to /dev/urandom, including when open_basedir is used.
+- Configure HSTS with at least 15552000 seconds. Disable HTTP compression and
+  enforce Nextcloud's security headers on static responses too.
 - Restrict administration with allowed_admin_ranges in nextcloud_config when the
   permitted networks are known. High-security deployments can set
-  enable_previews to false. Configure login blocking with a separate service
-  such as fail2ban and maintain backups and updates.
+  enable_previews to false.
 
 ## Operational Notes
 
 - Enable OPcache, preserve comments with opcache.save_comments=1 and retain
   timestamp validation. The tested revalidation interval is two seconds.
   Disabling revalidation can leave changed configuration stale until PHP-FPM
-  restarts. Size OPcache and FPM workers from measured workload and memory
-  availability; retain capacity for the database and operating system. The PHP
-  role's dynamic pool and worker recycling provide a starting point, not
-  universal production capacity.
+  restarts.
 - For production caching, provision APCu and Redis before configuring
   memcache.local, memcache.locking and redis in nextcloud_config. Enable
   apc.enable_cli when CLI jobs use APCu. Redis locking reduces database
-  contention; this role does not provision the cache service. Tune database
-  resources, upload limits and timeouts in their owning roles. Keep debug
-  disabled and avoid debug-level logging in production. Review HTTP/2 at the TLS
-  endpoint; apply the hardening guidance when evaluating compression.
+  contention; this role does not provision the cache service.
 - The latest release is selected only on initial deployment. An existing occ
   prevents archive replacement, so reruns do not upgrade or downgrade Nextcloud.
   Use the documented Nextcloud upgrade procedure separately; pending database
@@ -453,17 +434,11 @@ handling requests; there are no service restart handlers.
   installation paths and runtime ownership stable after provisioning.
 - Additional settings live in a separate configuration fragment. Removing a
   setting from nextcloud_config removes its managed override; an underlying
-  config.php value may then apply. PHP lint checks syntax, while Nextcloud
-  validates settings when using them.
+  config.php value may then apply.
 - nextcloud_apps installs missing apps and enables disabled ones without forcing
   compatibility or replacing installed versions. Unlisted apps are preserved.
   Removing an entry does not remove the app or its data. Manage app upgrades
   separately.
-- This role is independently authored. The linked installation guides are
-  references only; no guide text, scripts or Nextcloud code are bundled. The
-  downloaded archive retains its upstream copyright notices and license files,
-  including Nextcloud's AGPL license. The role's MIT license applies only to the
-  role itself.
 
 ## Supported Platforms
 
