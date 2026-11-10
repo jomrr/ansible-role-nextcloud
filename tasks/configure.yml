@@ -96,3 +96,29 @@
 - name: NEXTCLOUD | Install and enable requested apps
   ansible.builtin.import_tasks: apps.yml
   when: not ansible_check_mode or (__nextcloud_status.stdout | from_json).installed
+
+- name: NEXTCLOUD | Configure LDAP connections
+  ansible.builtin.include_tasks: ldap.yml
+  loop: "{{ nextcloud_ldap.keys() | sort }}"
+  loop_control:
+    loop_var: __nextcloud_ldap_id
+    label: "{{ __nextcloud_ldap_id }}"
+  when: >-
+    not ansible_check_mode or ((__nextcloud_status.stdout | from_json).installed
+    and 'user_ldap' in (__nextcloud_apps.stdout | from_json).enabled)
+
+- name: NEXTCLOUD | Configure external storage
+  ansible.builtin.import_tasks: external_storages.yml
+  when:
+    - nextcloud_external_storages | length > 0 or nextcloud_external_storages_purge
+    - >-
+      not ansible_check_mode or ((__nextcloud_status.stdout | from_json).installed
+      and 'files_external' in (__nextcloud_apps.stdout | from_json).enabled)
+
+- name: NEXTCLOUD | Configure app settings
+  ansible.builtin.include_tasks: app_config.yml
+  loop: "{{ nextcloud_app_config.keys() }}"
+  loop_control:
+    loop_var: __nextcloud_config_app
+    label: "{{ __nextcloud_config_app }}"
+  when: not ansible_check_mode or (__nextcloud_status.stdout | from_json).installed

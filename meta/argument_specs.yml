@@ -148,3 +148,96 @@ argument_specs:
             unchanged.
           - Unlisted apps are preserved; removing an entry does not uninstall it. App upgrades
             remain separately managed.
+      nextcloud_ldap:
+        type: dict
+        default: {}
+        no_log: true
+        description:
+          - Mapping of configuration IDs such as s01 to user_ldap keys and values; enables
+            user_ldap when nonempty.
+          - Missing IDs must follow Nextcloud's allocation sequence; gaps fail before creating
+            that configuration.
+          - Only supplied keys are managed. Use strings, numbers, booleans or lists for
+            multivalue LDAP fields.
+      nextcloud_ldap_update_password:
+        type: str
+        default: on_create
+        choices:
+          - on_create
+          - always
+        description:
+          - Write ldapAgentPassword only when creating a configuration, or on every run
+            without comparing the stored password.
+          - The always policy reports a change on each normal run that supplies a password.
+      nextcloud_ldap_test:
+        type: bool
+        default: false
+        description:
+          - Run ldap:test-config for every managed ID after configuration and fail if validation
+            or connectivity fails.
+          - Skipped in check mode.
+      nextcloud_external_storages:
+        type: list
+        elements: dict
+        default: []
+        description:
+          - Administrative mounts matched by their unique absolute mount_point; enables
+            files_external when nonempty.
+          - Existing mounts must retain their backend and authentication identifiers; personal
+            mounts are not managed.
+        options:
+          mount_point:
+            type: str
+            required: true
+            description: Normalized absolute mount point in Nextcloud, for example /Shared.
+          backend:
+            type: str
+            required: true
+            description: Storage backend identifier from files_external:backends, for example
+              local, dav or smb.
+          authentication:
+            type: str
+            required: true
+            description: Authentication backend identifier compatible with the selected
+              storage backend.
+          configuration:
+            type: dict
+            default: {}
+            no_log: true
+            description: Backend and authentication parameters; supplied keys are managed,
+              omitted keys are preserved.
+          options:
+            type: dict
+            default: {}
+            no_log: true
+            description: Mount options using JSON-compatible values; omitted keys are preserved.
+          applicable_users:
+            type: list
+            elements: str
+            default: []
+            description: Complete desired list of applicable user IDs; these users must
+              already exist.
+          applicable_groups:
+            type: list
+            elements: str
+            default: []
+            description: Complete desired list of applicable group IDs; empty user and group
+              lists grant access to everyone.
+      nextcloud_external_storages_purge:
+        type: bool
+        default: false
+        description:
+          - Remove administrative mounts omitted from nextcloud_external_storages, preserving
+            personal mounts and backend data.
+          - Enables files_external even when the desired mount list is empty.
+      nextcloud_app_config:
+        type: dict
+        default: {}
+        no_log: true
+        description:
+          - Mapping of app IDs to configuration keys and JSON-compatible values, compared
+            with config:list and set with config:app:set.
+          - Value types select the occ string, integer, float, boolean or array type. Omitted
+            keys are preserved.
+          - App installation and activation remain controlled by nextcloud_apps; lifecycle
+            keys and backgroundjobs_mode are reserved.

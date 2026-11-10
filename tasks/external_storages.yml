@@ -1,0 +1,52 @@
+---
+# role: nextcloud
+# file: tasks/external_storages.yml
+
+- name: NEXTCLOUD | Read administrative and personal external mounts
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - files_external:list
+      - --all
+      - --show-password
+      - --output=json
+  register: __nextcloud_mounts
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: NEXTCLOUD | Configure requested external mounts
+  ansible.builtin.include_tasks: external_storage.yml
+  loop: "{{ nextcloud_external_storages | map(attribute='mount_point') }}"
+  loop_control:
+    loop_var: __nextcloud_mount_point
+    label: "{{ __nextcloud_mount_point }}"
+  vars:
+    __nextcloud_storage: "{{ nextcloud_external_storages | selectattr('mount_point', 'equalto', __nextcloud_mount_point) | first }}"
+    __nextcloud_storage_existing: >-
+      {{ __nextcloud_mounts.stdout | from_json | selectattr('type', 'equalto', 'admin')
+      | selectattr('mount_point', 'equalto', __nextcloud_mount_point) | list }}
+
+- name: NEXTCLOUD | Remove unlisted administrative mounts
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - files_external:delete
+      - "{{ __nextcloud_mount_id | string }}"
+      - --yes
+  changed_when: true
+  loop: >-
+    {{ __nextcloud_mounts.stdout | from_json | selectattr('type', 'equalto', 'admin')
+    | rejectattr('mount_point', 'in', nextcloud_external_storages | map(attribute='mount_point')) | map(attribute='mount_id') }}
+  loop_control:
+    loop_var: __nextcloud_mount_id
+    label: "{{ __nextcloud_mount_id }}"
+  when: nextcloud_external_storages_purge

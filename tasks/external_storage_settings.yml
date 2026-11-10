@@ -1,0 +1,83 @@
+---
+# role: nextcloud
+# file: tasks/external_storage_settings.yml
+
+- name: NEXTCLOUD | Set changed external storage configuration
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - files_external:config
+      - --value-from-file
+      - --
+      - "{{ __nextcloud_storage_id | string }}"
+      - "{{ __nextcloud_storage_setting.key }}"
+      - php://stdin
+    stdin: >-
+      {{ (__nextcloud_storage_setting.value if __nextcloud_storage_setting.value is boolean else
+      __nextcloud_storage_setting.value | string) | to_json(separators=[',', ':']) | replace('/', '\/') }}
+    stdin_add_newline: false
+  changed_when: true
+  no_log: true
+  loop: "{{ __nextcloud_storage.configuration | default({}) | dict2items }}"
+  loop_control:
+    loop_var: __nextcloud_storage_setting
+    label: "{{ __nextcloud_mount_point }} / {{ __nextcloud_storage_setting.key }}"
+  when: >-
+    __nextcloud_storage_setting.key not in __nextcloud_storage_state.configuration
+    or (__nextcloud_storage_state.configuration[__nextcloud_storage_setting.key] | string)
+    != (__nextcloud_storage_setting.value | string)
+
+- name: NEXTCLOUD | Set changed external storage options
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - files_external:option
+      - --value-from-file
+      - --
+      - "{{ __nextcloud_storage_id | string }}"
+      - "{{ __nextcloud_storage_option.key }}"
+      - php://stdin
+    stdin: "{{ __nextcloud_storage_option.value | to_json }}"
+    stdin_add_newline: false
+  changed_when: true
+  no_log: true
+  loop: "{{ __nextcloud_storage.options | default({}) | dict2items }}"
+  loop_control:
+    loop_var: __nextcloud_storage_option
+    label: "{{ __nextcloud_mount_point }} / {{ __nextcloud_storage_option.key }}"
+  when: >-
+    __nextcloud_storage_option.key not in __nextcloud_storage_state.options
+    or __nextcloud_storage_state.options[__nextcloud_storage_option.key] != __nextcloud_storage_option.value
+
+- name: NEXTCLOUD | Reconcile external storage users and groups
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    cmd: >-
+      {{ nextcloud_php_binary | quote }} {{ (nextcloud_install_dir ~ '/occ') | quote }} files_external:applicable
+      {{ __nextcloud_storage_id | quote }}
+      {% for user in (__nextcloud_storage.applicable_users | default([])) | difference(__nextcloud_storage_state.applicable_users) %}
+      --add-user={{ user | quote }}
+      {% endfor %}
+      {% for user in __nextcloud_storage_state.applicable_users | difference(__nextcloud_storage.applicable_users | default([])) %}
+      --remove-user={{ user | quote }}
+      {% endfor %}
+      {% for group in (__nextcloud_storage.applicable_groups | default([])) | difference(__nextcloud_storage_state.applicable_groups) %}
+      --add-group={{ group | quote }}
+      {% endfor %}
+      {% for group in __nextcloud_storage_state.applicable_groups | difference(__nextcloud_storage.applicable_groups | default([])) %}
+      --remove-group={{ group | quote }}
+      {% endfor %}
+  changed_when: true
+  when: >-
+    (__nextcloud_storage.applicable_users | default([])) | symmetric_difference(__nextcloud_storage_state.applicable_users) | length > 0
+    or (__nextcloud_storage.applicable_groups | default([])) | symmetric_difference(__nextcloud_storage_state.applicable_groups) | length > 0

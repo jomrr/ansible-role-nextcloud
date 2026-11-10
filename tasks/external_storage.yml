@@ -1,0 +1,83 @@
+---
+# role: nextcloud
+# file: tasks/external_storage.yml
+
+- name: NEXTCLOUD | Read external storage backend metadata
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - files_external:backends
+      - storage
+      - "{{ __nextcloud_storage.backend }}"
+      - --output=json
+  register: __nextcloud_storage_backend
+  changed_when: false
+  check_mode: false
+
+- name: NEXTCLOUD | Check mount identity and authentication compatibility
+  ansible.builtin.assert:
+    that:
+      - __nextcloud_storage_existing | length <= 1
+      - __nextcloud_storage.authentication in (__nextcloud_storage_backend.stdout | from_json).supported_authentication_backends
+      - >-
+        __nextcloud_storage_existing | length == 0 or
+        ((__nextcloud_storage_existing | first).storage == (__nextcloud_storage_backend.stdout | from_json).storage_class and
+        (__nextcloud_storage_existing | first).authentication_type == __nextcloud_storage.authentication)
+      - __nextcloud_storage.configuration | default({}) | intersect(['mountpoint', 'mount_point']) | length == 0
+    quiet: true
+    fail_msg: >-
+      Mount {{ __nextcloud_mount_point }} must be unique and use compatible, unchanged backend and authentication identifiers.
+      Rename or remove an incompatible mount explicitly before changing its backend. Configuration must not rename the mount.
+
+- name: NEXTCLOUD | Create external mount with configuration and access restrictions
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    cmd: >-
+      {{ nextcloud_php_binary | quote }} {{ (nextcloud_install_dir ~ '/occ') | quote }} files_external:create
+      {{ __nextcloud_mount_point | quote }} {{ __nextcloud_storage.backend | quote }} {{ __nextcloud_storage.authentication | quote }}
+      --output=json
+      {% for key, value in (__nextcloud_storage.configuration | default({})).items() %}
+      --config={{ (key ~ '=' ~ (value | ternary('true', 'false') if value is boolean else value | string)) | quote }}
+      {% endfor %}
+      {% for user in __nextcloud_storage.applicable_users | default([]) %} --applicable-user={{ user | quote }} {% endfor %}
+      {% for group in __nextcloud_storage.applicable_groups | default([]) %} --applicable-group={{ group | quote }} {% endfor %}
+  register: __nextcloud_storage_created
+  changed_when: true
+  failed_when: __nextcloud_storage_created.rc != 0 or __nextcloud_storage_created.stdout | trim is not match('^[0-9]+$')
+  no_log: true
+  when: __nextcloud_storage_existing | length == 0
+
+- name: NEXTCLOUD | Read external mounts after creation
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - files_external:list
+      - --all
+      - --show-password
+      - --output=json
+  register: __nextcloud_storage_current
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: NEXTCLOUD | Reconcile external mount settings
+  ansible.builtin.include_tasks: external_storage_settings.yml
+  loop: >-
+    {{ __nextcloud_storage_current.stdout | from_json | selectattr('type', 'equalto', 'admin')
+    | selectattr('mount_point', 'equalto', __nextcloud_mount_point) | map(attribute='mount_id') }}
+  loop_control:
+    loop_var: __nextcloud_storage_id
+    label: "{{ __nextcloud_mount_point }}"
+  vars:
+    __nextcloud_storage_state: >-
+      {{ __nextcloud_storage_current.stdout | from_json | selectattr('mount_id', 'equalto', __nextcloud_storage_id) | first }}

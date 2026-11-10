@@ -1,0 +1,48 @@
+---
+# role: nextcloud
+# file: tasks/app_config.yml
+
+- name: NEXTCLOUD | Read application configuration
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv: ["{{ nextcloud_php_binary }}", "{{ nextcloud_install_dir }}/occ", 'config:list', "{{ __nextcloud_config_app }}", --private, --output=json]
+  register: __nextcloud_app_settings
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: NEXTCLOUD | Set changed application settings
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - config:app:set
+      - "--value={{ __nextcloud_app_setting.value if __nextcloud_app_setting.value is string else __nextcloud_app_setting.value | to_json }}"
+      - "--type={{ __nextcloud_app_value_type }}"
+      - --no-interaction
+      - --
+      - "{{ __nextcloud_config_app }}"
+      - "{{ __nextcloud_app_setting.key }}"
+  vars:
+    __nextcloud_app_value_type: >-
+      {{ 'boolean' if __nextcloud_app_setting.value is boolean else
+      'integer' if __nextcloud_app_setting.value is integer else
+      'float' if __nextcloud_app_setting.value is float else
+      'string' if __nextcloud_app_setting.value is string else 'array' }}
+  changed_when: true
+  no_log: true
+  loop: "{{ nextcloud_app_config[__nextcloud_config_app] | dict2items }}"
+  loop_control:
+    loop_var: __nextcloud_app_setting
+    label: "{{ __nextcloud_config_app }} / {{ __nextcloud_app_setting.key }}"
+  when: >-
+    __nextcloud_app_setting.key not in (__nextcloud_app_settings.stdout | from_json).apps[__nextcloud_config_app]
+    or (__nextcloud_app_settings.stdout | from_json).apps[__nextcloud_config_app][__nextcloud_app_setting.key]
+    != __nextcloud_app_setting.value
+    or ((__nextcloud_app_settings.stdout | from_json).apps[__nextcloud_config_app][__nextcloud_app_setting.key] is boolean)
+    != (__nextcloud_app_setting.value is boolean)

@@ -122,6 +122,89 @@
         path: /tmp/nextcloud-config-before.php
       register: __nextcloud_test_saved_config
 
+    - name: NEXTCLOUD | Read managed LDAP state including fixture passwords
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv: [/usr/bin/php, /var/www/nextcloud/occ, 'ldap:show-config', --output=json, --show-password]
+      register: __nextcloud_test_ldap
+      changed_when: false
+      no_log: true
+
+    - name: NEXTCLOUD | Verify LDAP reconciliation and password policy
+      ansible.builtin.assert:
+        that:
+          - (__nextcloud_test_ldap.stdout | from_json).s01.ldapHost == 'ldap://127.0.0.1'
+          - (__nextcloud_test_ldap.stdout | from_json).s01.ldapBase == ['dc=example,dc=test']
+          - (__nextcloud_test_ldap.stdout | from_json).s01.ldapBaseUsers == ['ou=people,dc=example,dc=test']
+          - (__nextcloud_test_ldap.stdout | from_json).s01.ldapCacheTTL | int == 900
+          - (__nextcloud_test_ldap.stdout | from_json).s02.ldapHost == 'ldaps://directory.example.test'
+          - >-
+            (__nextcloud_test_ldap.stdout | from_json).s01.ldapAgentPassword ==
+            ('molecule-rotated-ldap-password' if __nextcloud_test_saved_config.stat.exists else 'molecule-ldap-password')
+        quiet: true
+      no_log: true
+
+    - name: NEXTCLOUD | Verify app configuration values
+      ansible.builtin.assert:
+        that:
+          - >-
+            (__nextcloud_test_config.stdout | from_json).apps.files_sharing[__nextcloud_test_app_key]
+            == nextcloud_app_config.files_sharing[__nextcloud_test_app_key]
+        quiet: true
+      loop: "{{ nextcloud_app_config.files_sharing.keys() }}"
+      loop_control:
+        loop_var: __nextcloud_test_app_key
+        label: "{{ __nextcloud_test_app_key }}"
+      no_log: true
+
+    - name: NEXTCLOUD | Read configured external mounts
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv: [/usr/bin/php, /var/www/nextcloud/occ, 'files_external:list', --all, --output=json]
+      register: __nextcloud_test_mounts
+      changed_when: false
+
+    - name: NEXTCLOUD | Verify external storage settings and access restrictions
+      ansible.builtin.assert:
+        that:
+          - __nextcloud_test_mount.configuration.datadir == '/srv/nextcloud-external'
+          - __nextcloud_test_mount.authentication_type == 'null::null'
+          - __nextcloud_test_mount.options.readonly == (__nextcloud_test_mount.mount_point == '/Shared files')
+          - __nextcloud_test_mount.applicable_users == (['admin'] if __nextcloud_test_mount.mount_point == '/Shared files' else [])
+          - __nextcloud_test_mount.applicable_groups == (['admin'] if __nextcloud_test_mount.mount_point == '/Shared files' else [])
+        quiet: true
+      loop: >-
+        {{ __nextcloud_test_mounts.stdout | from_json | selectattr('type', 'equalto', 'admin')
+        | selectattr('mount_point', 'in', ['/Shared files', '/Archive']) }}
+      loop_control:
+        loop_var: __nextcloud_test_mount
+        label: "{{ __nextcloud_test_mount.mount_point }}"
+
+    - name: NEXTCLOUD | Verify requested mount count and automatic app activation
+      ansible.builtin.assert:
+        that:
+          - >-
+            __nextcloud_test_mounts.stdout | from_json | selectattr('type', 'equalto', 'admin')
+            | selectattr('mount_point', 'in', ['/Shared files', '/Archive']) | length == 2
+          - "'user_ldap' in (__nextcloud_test_apps.stdout | from_json).enabled"
+        quiet: true
+
+    - name: NEXTCLOUD | Verify purge policy and preservation of personal mounts
+      ansible.builtin.assert:
+        that:
+          - >-
+            (__nextcloud_test_mounts.stdout | from_json | selectattr('type', 'equalto', 'admin')
+            | selectattr('mount_point', 'equalto', '/Unmanaged') | length == 0)
+            == (nextcloud_external_storages_purge | default(false))
+          - >-
+            __nextcloud_test_mounts.stdout | from_json | selectattr('type', 'equalto', 'personal')
+            | selectattr('mount_point', 'equalto', '/Personal') | length == 1
+          - (__nextcloud_test_config.stdout | from_json).apps.files_sharing.molecule_unmanaged == 'preserved'
+        quiet: true
+      when: __nextcloud_test_saved_config.stat.exists
+
     - name: NEXTCLOUD | Verify uploaded data survived reconvergence
       ansible.builtin.uri:
         ca_path: /etc/nextcloud-test/server.crt

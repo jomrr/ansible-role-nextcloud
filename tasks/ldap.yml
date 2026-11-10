@@ -1,0 +1,142 @@
+---
+# role: nextcloud
+# file: tasks/ldap.yml
+
+- name: NEXTCLOUD | Read LDAP configuration IDs
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv: ["{{ nextcloud_php_binary }}", "{{ nextcloud_install_dir }}/occ", 'ldap:show-config', --output=json]
+  register: __nextcloud_ldap_before
+  changed_when: false
+  check_mode: false
+
+- name: NEXTCLOUD | Check the next available LDAP configuration ID
+  ansible.builtin.assert:
+    that:
+      - >-
+        __nextcloud_ldap_id == 's%02d' | format(
+        (((__nextcloud_ldap_before.stdout | from_json | default({}, true)).keys() | sort | last | default('s00'))[1:] | int) + 1)
+    quiet: true
+    fail_msg: >-
+      Nextcloud assigns LDAP IDs sequentially. Requested {{ __nextcloud_ldap_id }}, but the next ID is
+      {{ 's%02d' | format((((__nextcloud_ldap_before.stdout | from_json | default({}, true)).keys()
+      | sort | last | default('s00'))[1:] | int) + 1) }}. Use that ID first.
+  when: not ansible_check_mode and __nextcloud_ldap_id not in (__nextcloud_ldap_before.stdout | from_json)
+
+- name: NEXTCLOUD | Create missing LDAP configuration
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv: ["{{ nextcloud_php_binary }}", "{{ nextcloud_install_dir }}/occ", 'ldap:create-empty-config', --only-print-prefix]
+  register: __nextcloud_ldap_created
+  changed_when: true
+  failed_when: __nextcloud_ldap_created.rc != 0 or __nextcloud_ldap_created.stdout | trim != __nextcloud_ldap_id
+  when: __nextcloud_ldap_id not in (__nextcloud_ldap_before.stdout | from_json)
+
+- name: NEXTCLOUD | Read LDAP configuration values
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv: ["{{ nextcloud_php_binary }}", "{{ nextcloud_install_dir }}/occ", 'ldap:show-config', --output=json]
+  register: __nextcloud_ldap_current
+  changed_when: false
+  check_mode: false
+
+- name: NEXTCLOUD | Validate writable LDAP keys
+  ansible.builtin.assert:
+    that:
+      - __nextcloud_ldap_key in (__nextcloud_ldap_current.stdout | from_json)[__nextcloud_ldap_id]
+      - __nextcloud_ldap_key not in ['ldapIgnoreNamingRules', 'ldapUuidUserAttribute', 'ldapUuidGroupAttribute']
+    quiet: true
+    fail_msg: "Unknown or read-only LDAP key {{ __nextcloud_ldap_key }} in {{ __nextcloud_ldap_id }}."
+  loop: "{{ nextcloud_ldap[__nextcloud_ldap_id].keys() }}"
+  loop_control:
+    loop_var: __nextcloud_ldap_key
+    label: "{{ __nextcloud_ldap_id }} / {{ __nextcloud_ldap_key }}"
+  when: __nextcloud_ldap_id in (__nextcloud_ldap_current.stdout | from_json)
+
+- name: NEXTCLOUD | Set changed LDAP values
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - ldap:set-config
+      - --
+      - "{{ __nextcloud_ldap_id }}"
+      - "{{ __nextcloud_ldap_setting.key }}"
+      - "{{ __nextcloud_ldap_value }}"
+  vars:
+    __nextcloud_ldap_value: >-
+      {{ (__nextcloud_ldap_setting.value | int | string) if __nextcloud_ldap_setting.value is boolean else
+      (__nextcloud_ldap_setting.value | join(';')) if __nextcloud_ldap_setting.value is sequence
+      and __nextcloud_ldap_setting.value is not string else (__nextcloud_ldap_setting.value | string) }}
+  changed_when: true
+  no_log: true
+  loop: "{{ nextcloud_ldap[__nextcloud_ldap_id] | dict2items | rejectattr('key', 'in', ['ldapAgentPassword', 'ldapConfigurationActive']) }}"
+  loop_control:
+    loop_var: __nextcloud_ldap_setting
+    label: "{{ __nextcloud_ldap_id }} / {{ __nextcloud_ldap_setting.key }}"
+  when:
+    - __nextcloud_ldap_id in (__nextcloud_ldap_current.stdout | from_json)
+    - >-
+      ((__nextcloud_ldap_current.stdout | from_json)[__nextcloud_ldap_id][__nextcloud_ldap_setting.key]
+      | join(';') if (__nextcloud_ldap_current.stdout | from_json)[__nextcloud_ldap_id][__nextcloud_ldap_setting.key]
+      is sequence and (__nextcloud_ldap_current.stdout | from_json)[__nextcloud_ldap_id][__nextcloud_ldap_setting.key]
+      is not string else (__nextcloud_ldap_current.stdout | from_json)[__nextcloud_ldap_id][__nextcloud_ldap_setting.key] | string)
+      != __nextcloud_ldap_value
+
+- name: NEXTCLOUD | Set LDAP bind password according to update policy
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - ldap:set-config
+      - --
+      - "{{ __nextcloud_ldap_id }}"
+      - ldapAgentPassword
+      - "{{ nextcloud_ldap[__nextcloud_ldap_id].ldapAgentPassword }}"
+  changed_when: true
+  no_log: true
+  when:
+    - "'ldapAgentPassword' in nextcloud_ldap[__nextcloud_ldap_id]"
+    - __nextcloud_ldap_created is changed or nextcloud_ldap_update_password == 'always'
+
+- name: NEXTCLOUD | Set LDAP activation after connection settings and password
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - "{{ nextcloud_php_binary }}"
+      - "{{ nextcloud_install_dir }}/occ"
+      - ldap:set-config
+      - --
+      - "{{ __nextcloud_ldap_id }}"
+      - ldapConfigurationActive
+      - "{{ nextcloud_ldap[__nextcloud_ldap_id].ldapConfigurationActive | int | string }}"
+  changed_when: true
+  when:
+    - __nextcloud_ldap_id in (__nextcloud_ldap_current.stdout | from_json)
+    - "'ldapConfigurationActive' in nextcloud_ldap[__nextcloud_ldap_id]"
+    - >-
+      (__nextcloud_ldap_current.stdout | from_json)[__nextcloud_ldap_id].ldapConfigurationActive | int
+      != nextcloud_ldap[__nextcloud_ldap_id].ldapConfigurationActive | int
+
+- name: NEXTCLOUD | Test LDAP configuration and connectivity
+  become: true
+  become_user: "{{ nextcloud_user | default(__nextcloud_user, true) }}"
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv: ["{{ nextcloud_php_binary }}", "{{ nextcloud_install_dir }}/occ", 'ldap:test-config', "{{ __nextcloud_ldap_id }}"]
+  changed_when: false
+  when: nextcloud_ldap_test and not ansible_check_mode

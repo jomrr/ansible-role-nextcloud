@@ -65,3 +65,22 @@ nextcloud_apps: []
 # nextcloud_apps:
 #   - calendar
 #   - contacts
+
+# LDAP configuration IDs mapped to user_ldap settings.
+nextcloud_ldap: {}
+
+# Policy for writing LDAP bind passwords without comparing stored secrets.
+# Choices: on_create, always
+nextcloud_ldap_update_password: on_create
+
+# Validate every managed LDAP configuration and its connectivity after configuration.
+nextcloud_ldap_test: false
+
+# Administrative external storage mounts identified by their absolute mount point.
+nextcloud_external_storages: []
+
+# Remove administrative external mounts omitted from nextcloud_external_storages.
+nextcloud_external_storages_purge: false
+
+# App identifiers mapped to configuration keys and values.
+nextcloud_app_config: {}

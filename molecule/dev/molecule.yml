@@ -41,7 +41,52 @@ provisioner:
           debug: false
         nextcloud_apps:
           - "calendar"
-          - "files_external"
+        nextcloud_ldap:
+          s01:
+            ldapHost: "ldap://127.0.0.1"
+            ldapPort: "9"
+            ldapBase:
+              - "dc=example,dc=test"
+            ldapBaseUsers:
+              - "ou=people,dc=example,dc=test"
+            ldapAgentName: "cn=reader,dc=example,dc=test"
+            ldapAgentPassword: "molecule-ldap-password"
+            ldapCacheTTL: 900
+            ldapConfigurationActive: "0"
+          s02:
+            ldapHost: "ldaps://directory.example.test"
+            ldapPort: "636"
+            ldapConfigurationActive: false
+        nextcloud_external_storages:
+          - mount_point: "/Shared files"
+            backend: "local"
+            authentication: "null::null"
+            configuration:
+              datadir: "/srv/nextcloud-external"
+            options:
+              readonly: true
+              enable_sharing: false
+            applicable_users:
+              - "admin"
+            applicable_groups:
+              - "admin"
+          - mount_point: "/Archive"
+            backend: "local"
+            authentication: "null::null"
+            configuration:
+              datadir: "/srv/nextcloud-external"
+            options:
+              readonly: false
+        nextcloud_app_config:
+          files_sharing:
+            incoming_server2server_share_enabled: "no"
+            molecule_string: "Spaces, umlauts ä and literal $HOME; \"quotes\""
+            molecule_integer: 7
+            molecule_float: 7.0
+            molecule_boolean: true
+            molecule_array:
+              - "alpha"
+              - "beta"
         __nextcloud_test_webserver: "httpd"
         __nextcloud_test_php_settings:
           memory_limit: "512M"
@@ -75,6 +120,7 @@ provisioner:
             - "php-gmp"
             - "php-mysql"
             - "php-pgsql"
+            - "php-ldap"
           RedHat:
             - "php-gd"
             - "php-process"
@@ -86,6 +132,7 @@ provisioner:
             - "php-gmp"
             - "php-mysqlnd"
             - "php-pgsql"
+            - "php-ldap"
           Suse:
             - "php8-bz2"
             - "php8-curl"
@@ -108,10 +155,12 @@ provisioner:
             - "php8-xmlwriter"
             - "php8-zlib"
             - "php8-tokenizer"
+            - "php8-ldap"
     host_vars:
       fedora-latest-nextcloud:
         nextcloud_database_type: "pgsql"
         __nextcloud_test_webserver: "nginx"
+        nextcloud_external_storages_purge: true
       ubuntu-latest-nextcloud:
         nextcloud_database_type: "pgsql"
         __nextcloud_test_webserver: "nginx"

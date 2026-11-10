@@ -78,3 +78,46 @@
   loop_control:
     loop_var: __nextcloud_app
     label: "{{ __nextcloud_app }}"
+
+- name: NEXTCLOUD | Validate LDAP identifiers and setting mappings
+  ansible.builtin.assert:
+    that:
+      - __nextcloud_ldap_id is match('^s[0-9]{2,}$')
+      - nextcloud_ldap[__nextcloud_ldap_id] is mapping
+    quiet: true
+    fail_msg: Use Nextcloud LDAP IDs such as s01 with a mapping of user_ldap keys to values.
+  loop: "{{ nextcloud_ldap.keys() }}"
+  loop_control:
+    loop_var: __nextcloud_ldap_id
+    label: "{{ __nextcloud_ldap_id }}"
+
+- name: NEXTCLOUD | Validate external mount points
+  ansible.builtin.assert:
+    that:
+      - __nextcloud_mount_point.startswith('/')
+      - __nextcloud_mount_point != '/'
+      - __nextcloud_mount_point == __nextcloud_mount_point | ansible.builtin.normpath
+      - >-
+        nextcloud_external_storages | map(attribute='mount_point') | unique | length
+        == nextcloud_external_storages | length
+    quiet: true
+    fail_msg: External mounts require unique normalized absolute mount points, such as /Shared.
+  loop: "{{ nextcloud_external_storages | map(attribute='mount_point') }}"
+  loop_control:
+    loop_var: __nextcloud_mount_point
+    label: "{{ __nextcloud_mount_point }}"
+
+- name: NEXTCLOUD | Validate app configuration mappings
+  ansible.builtin.assert:
+    that:
+      - __nextcloud_config_app is match('^[a-z][a-z0-9_]*$')
+      - __nextcloud_config_app not in ['all', 'system']
+      - nextcloud_app_config[__nextcloud_config_app] is mapping
+      - nextcloud_app_config[__nextcloud_config_app].keys() | intersect(['enabled', 'installed_version']) | length == 0
+      - __nextcloud_config_app != 'core' or 'backgroundjobs_mode' not in nextcloud_app_config[__nextcloud_config_app]
+    quiet: true
+    fail_msg: Use app IDs and settings without selectors, app lifecycle keys or the managed backgroundjobs_mode setting.
+  loop: "{{ nextcloud_app_config.keys() }}"
+  loop_control:
+    loop_var: __nextcloud_config_app
+    label: "{{ __nextcloud_config_app }}"

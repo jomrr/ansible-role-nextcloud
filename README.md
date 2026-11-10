@@ -28,6 +28,8 @@ installed release and are idempotent.
   scheduling.
 - Installation and activation of explicitly requested Nextcloud apps, preserving
   other apps and installed versions.
+- LDAP connections, administrative external storage mounts and per-app settings
+  through occ.
 - Persistent SELinux contexts for application and writable paths, plus
   explicitly configured SELinux booleans.
 - Archive extraction tools, ACL support for privilege changes and the cron
@@ -358,6 +360,97 @@ Default:
 nextcloud_apps: []
 ```
 
+### `nextcloud_ldap`
+
+Type: `dict`. Required: `false`.
+
+Mapping of configuration IDs such as s01 to user_ldap keys and values; enables
+user_ldap when nonempty.
+Missing IDs must follow Nextcloud's allocation sequence; gaps fail before
+creating that configuration.
+Only supplied keys are managed. Use strings, numbers, booleans or lists for
+multivalue LDAP fields.
+
+Default:
+
+```yaml
+nextcloud_ldap: {}
+```
+
+### `nextcloud_ldap_update_password`
+
+Type: `str`. Required: `false`.
+
+Write ldapAgentPassword only when creating a configuration, or on every run
+without comparing the stored password.
+The always policy reports a change on each normal run that supplies a password.
+
+Default:
+
+```yaml
+nextcloud_ldap_update_password: on_create
+```
+
+### `nextcloud_ldap_test`
+
+Type: `bool`. Required: `false`.
+
+Run ldap:test-config for every managed ID after configuration and fail if
+validation or connectivity fails.
+Skipped in check mode.
+
+Default:
+
+```yaml
+nextcloud_ldap_test: false
+```
+
+### `nextcloud_external_storages`
+
+Type: `list`. Required: `false`.
+
+Administrative mounts matched by their unique absolute mount_point; enables
+files_external when nonempty.
+Existing mounts must retain their backend and authentication identifiers;
+personal mounts are not managed.
+
+Default:
+
+```yaml
+nextcloud_external_storages: []
+```
+
+### `nextcloud_external_storages_purge`
+
+Type: `bool`. Required: `false`.
+
+Remove administrative mounts omitted from nextcloud_external_storages,
+preserving personal mounts and backend data.
+Enables files_external even when the desired mount list is empty.
+
+Default:
+
+```yaml
+nextcloud_external_storages_purge: false
+```
+
+### `nextcloud_app_config`
+
+Type: `dict`. Required: `false`.
+
+Mapping of app IDs to configuration keys and JSON-compatible values, compared
+with config:list and set with config:app:set.
+Value types select the occ string, integer, float, boolean or array type.
+Omitted keys are preserved.
+App installation and activation remain controlled by nextcloud_apps; lifecycle
+keys and backgroundjobs_mode are reserved.
+
+Default:
+
+```yaml
+nextcloud_app_config: {}
+```
+
 ## Managed Files
 
 - `/var/cache/nextcloud/latest.tar.bz2` Verified upstream archive retained in a
@@ -439,6 +532,37 @@ handling requests; there are no service restart handlers.
   compatibility or replacing installed versions. Unlisted apps are preserved.
   Removing an entry does not remove the app or its data. Manage app upgrades
   separately.
+- nextcloud_ldap enables user_ldap and manages only supplied keys. Provision
+  PHP's LDAP extension separately. Use the camelCase keys and normalized values
+  returned by ldap:show-config, including lowercase attribute names and attr:
+  naming rules. Use lists for multivalue fields such as ldapBase and
+  ldapBaseUsers. Nextcloud assigns missing IDs sequentially; requested IDs are
+  processed in sorted order and must match the next available ID. The role fails
+  on gaps instead of creating unused connections. Removing an ID from the
+  mapping preserves the connection.
+- nextcloud_ldap_update_password defaults to on_create, so changing
+  ldapAgentPassword on an existing connection does not rotate it. Select always
+  to write supplied passwords on every normal run; those runs report changes
+  even if the password is unchanged. nextcloud_ldap_test runs ldap:test-config
+  after configuration and fails on invalid settings or failed connectivity.
+- nextcloud_external_storages enables files_external and identifies
+  administrative mounts by their absolute mount point. Obtain backend and
+  authentication identifiers with occ files_external:backends. Provision
+  required PHP extensions and remote services separately. A backend or
+  authentication change on an existing mount requires explicit removal or a
+  different mount point. Only supplied configuration and options keys are
+  reconciled; unlisted keys remain unchanged.
+- applicable_users and applicable_groups replace the complete access lists;
+  empty lists make the mount available to everyone. Users and groups must
+  already exist. nextcloud_external_storages_purge removes unlisted
+  administrative mounts; with an empty desired list it removes all
+  administrative mounts. Personal mounts and files in the backend remain
+  untouched.
+- nextcloud_app_config manages supplied app keys and preserves other keys. YAML
+  values determine the occ type; quote numeric strings when the app expects
+  strings. Install and enable the affected apps through nextcloud_apps.
+  Lifecycle settings enabled and installed_version, and
+  core.backgroundjobs_mode, are managed separately and cannot be supplied here.
 
 ## Supported Platforms
 
@@ -478,6 +602,43 @@ Store both installation passwords in Ansible Vault.
         - contacts
 ```
 
+### Configure LDAP, external storage and app settings
+
+Configure an existing instance with prepared LDAP and storage services.
+
+```yaml
+nextcloud_ldap:
+  s01:
+    ldapHost: ldaps://ldap.example.org
+    ldapPort: '636'
+    ldapAgentName: cn=nextcloud,ou=services,dc=example,dc=org
+    ldapAgentPassword: "{{ vault_nextcloud_ldap_password }}"
+    ldapBase:
+      - dc=example,dc=org
+    ldapBaseUsers:
+      - ou=people,dc=example,dc=org
+    ldapUserFilter: (objectClass=inetOrgPerson)
+    ldapLoginFilter: (&(objectClass=inetOrgPerson)(uid=%uid))
+    ldapUserDisplayName: cn
+    ldapConfigurationActive: '1'
+nextcloud_ldap_update_password: on_create
+nextcloud_ldap_test: true
+nextcloud_external_storages:
+  - mount_point: /Shared
+    backend: local
+    authentication: 'null::null'
+    configuration:
+      datadir: /srv/nextcloud-shared
+    options:
+      readonly: true
+      enable_sharing: false
+    applicable_groups:
+      - staff
+nextcloud_app_config:
+  files_sharing:
+    incoming_server2server_share_enabled: 'no'
+```
+
 ## References
 
 - [Nextcloud installation manual](https://docs.nextcloud.com/server/latest/admin_manual/installation/index.html)
@@ -488,6 +649,7 @@ Store both installation passwords in Ansible Vault.
 - [Nextcloud background jobs](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/background_jobs_configuration.html)
 - [Nextcloud SELinux configuration](https://docs.nextcloud.com/server/latest/admin_manual/installation/selinux_configuration.html)
 - [Nextcloud app commands](https://docs.nextcloud.com/server/latest/admin_manual/occ_apps.html)
+- [Nextcloud occ commands](https://docs.nextcloud.com/server/latest/admin_manual/occ_command.html)
 - [Nextcloud hardening guidance](https://docs.nextcloud.com/server/latest/admin_manual/installation/harden_server.html)
 - [Apache FastCGI environment handling](https://httpd.apache.org/docs/2.4/mod/mod_proxy_fcgi.html#proxyfcgisetenvif)
 

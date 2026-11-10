@@ -50,6 +50,16 @@
               listen: 127.0.0.1:9000
               php_admin_value[memory_limit]: "{{ __nextcloud_test_php_settings.memory_limit }}"
 
+    - name: NEXTCLOUD | Prepare an external storage directory
+      become: true
+      become_user: root
+      ansible.builtin.file:
+        path: /srv/nextcloud-external
+        state: directory
+        owner: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+        group: "{{ __nextcloud_test_platform[ansible_facts.os_family].group }}"
+        mode: '0750'
+
     - name: NEXTCLOUD | Inspect PHP CLI configuration and OPcache availability
       ansible.builtin.command:
         argv:

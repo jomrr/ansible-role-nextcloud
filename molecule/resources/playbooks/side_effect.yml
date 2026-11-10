@@ -31,6 +31,119 @@
         group: root
         mode: '0600'
 
+    - name: NEXTCLOUD | Rotate an LDAP password using the always policy
+      ansible.builtin.include_role:
+        name: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}"
+      vars:
+        nextcloud_ldap:
+          s01:
+            ldapAgentPassword: molecule-rotated-ldap-password
+        nextcloud_ldap_update_password: always
+
+    - name: NEXTCLOUD | Verify LDAP ID gaps fail before creation
+      block:
+        - name: NEXTCLOUD | Request a nonsequential LDAP ID
+          ansible.builtin.include_role:
+            name: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}"
+            tasks_from: ldap.yml
+          vars:
+            __nextcloud_ldap_id: s04
+            nextcloud_ldap:
+              s04:
+                ldapHost: ldap://gap.example.test
+
+        - name: NEXTCLOUD | Reject an unexpectedly accepted LDAP ID gap
+          ansible.builtin.fail:
+            msg: A gap in LDAP IDs must fail before configuration creation.
+      rescue:
+        - name: NEXTCLOUD | Verify the LDAP allocation failure identifies the next ID
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'NEXTCLOUD | Check the next available LDAP configuration ID'
+              - "'s03' in ansible_failed_result.msg"
+            quiet: true
+
+    - name: NEXTCLOUD | Verify incompatible mount changes fail without replacement
+      block:
+        - name: NEXTCLOUD | Request a different backend on an existing mount
+          ansible.builtin.include_role:
+            name: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}"
+            tasks_from: external_storages.yml
+          vars:
+            nextcloud_external_storages:
+              - mount_point: /Shared files
+                backend: dav
+                authentication: 'password::password'
+
+        - name: NEXTCLOUD | Reject an unexpectedly accepted backend change
+          ansible.builtin.fail:
+            msg: An incompatible backend change must fail without replacing the mount.
+      rescue:
+        - name: NEXTCLOUD | Verify the mount identity check rejected the change
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'NEXTCLOUD | Check mount identity and authentication compatibility'
+            quiet: true
+
+    - name: NEXTCLOUD | Verify optional LDAP connectivity failures stop the role
+      block:
+        - name: NEXTCLOUD | Request LDAP testing against the unreachable fixture endpoint
+          ansible.builtin.include_role:
+            name: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}"
+            tasks_from: ldap.yml
+          vars:
+            __nextcloud_ldap_id: s01
+            nextcloud_ldap_test: true
+
+        - name: NEXTCLOUD | Reject an unexpectedly successful LDAP connectivity test
+          ansible.builtin.fail:
+            msg: The unreachable LDAP fixture must fail connectivity validation.
+      rescue:
+        - name: NEXTCLOUD | Verify LDAP testing was the failing operation
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'NEXTCLOUD | Test LDAP configuration and connectivity'
+              - ansible_failed_result.rc != 0
+            quiet: true
+
+    - name: NEXTCLOUD | Read mount IDs before changing existing state
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv: [/usr/bin/php, /var/www/nextcloud/occ, 'files_external:list', --all, --output=json]
+      register: __nextcloud_test_mounts_before
+      changed_when: false
+
+    - name: NEXTCLOUD | Change backend configuration and remove storage restrictions
+      become: true
+      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
+      ansible.builtin.command:
+        argv: "{{ ['/usr/bin/php', '/var/www/nextcloud/occ'] + __nextcloud_test_change }}"
+      changed_when: true
+      loop:
+        - [ldap:set-config, s01, ldapHost, ldap://changed.example.test]
+        - [ldap:set-config, s01, ldapBase, dc=changed]
+        - [ldap:set-config, s01, ldapCacheTTL, '100']
+        - [ldap:delete-config, s02]
+        - [config:app:set, files_sharing, molecule_string, --value=changed]
+        - [config:app:set, files_sharing, molecule_integer, --value=99]
+        - [config:app:set, files_sharing, molecule_float, --value=8.5]
+        - [config:app:set, files_sharing, molecule_unmanaged, --value=preserved]
+        - [files_external:config, "{{ __nextcloud_test_shared_id }}", datadir, /tmp]
+        - [files_external:option, "{{ __nextcloud_test_shared_id }}", readonly, 'false']
+        - [files_external:applicable, "{{ __nextcloud_test_shared_id }}", --remove-all]
+        - [files_external:applicable, "{{ __nextcloud_test_archive_id }}", --add-user=admin, --add-group=admin]
+        - [files_external:create, /Unmanaged, local, 'null::null', --config=datadir=/srv/nextcloud-external]
+        - [files_external:create, /Personal, local, 'null::null', --config=datadir=/srv/nextcloud-external, --user=admin]
+      loop_control:
+        loop_var: __nextcloud_test_change
+        label: "{{ __nextcloud_test_change[0] }}"
+      vars:
+        __nextcloud_test_shared_id: >-
+          {{ (__nextcloud_test_mounts_before.stdout | from_json | selectattr('mount_point', 'equalto', '/Shared files') | first).mount_id | string }}
+        __nextcloud_test_archive_id: >-
+          {{ (__nextcloud_test_mounts_before.stdout | from_json | selectattr('mount_point', 'equalto', '/Archive') | first).mount_id | string }}
+
     - name: NEXTCLOUD | Disable a requested app
       become: true
       become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"

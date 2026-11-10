@@ -27,7 +27,9 @@
       - "{{ __nextcloud_app }}"
       - --no-interaction
   changed_when: true
-  loop: "{{ nextcloud_apps }}"
+  loop: >-
+    {{ nextcloud_apps | union(['user_ldap'] if nextcloud_ldap | length > 0 else [])
+    | union(['files_external'] if nextcloud_external_storages | length > 0 or nextcloud_external_storages_purge else []) }}
   loop_control:
     loop_var: __nextcloud_app
     label: "{{ __nextcloud_app }}"
@@ -46,7 +48,9 @@
       - "{{ __nextcloud_app }}"
       - --no-interaction
   changed_when: true
-  loop: "{{ nextcloud_apps }}"
+  loop: >-
+    {{ nextcloud_apps | union(['user_ldap'] if nextcloud_ldap | length > 0 else [])
+    | union(['files_external'] if nextcloud_external_storages | length > 0 or nextcloud_external_storages_purge else []) }}
   loop_control:
     loop_var: __nextcloud_app
     label: "{{ __nextcloud_app }}"

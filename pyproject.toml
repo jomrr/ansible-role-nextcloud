@@ -2,7 +2,7 @@
 name = "nextcloud"
 version = "0.0.0"
 description = "Install Nextcloud from its verified release archive and configure an application on a prepared PHP and database stack."
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 authors = [
   { name = "Jonas Mauer" },
 ]
@@ -17,7 +17,7 @@ package = false
 
 [dependency-groups]
 ansible = [
-  "ansible-core==2.20.*",
+  "ansible-core==2.22.*",
   "ansible-lint==26.*",
 ]
 
