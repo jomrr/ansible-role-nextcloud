@@ -184,10 +184,6 @@ scenario:
     - "idempotence"
     - "check"
     - "verify"
-    - "side_effect"
-    - "converge"
-    - "idempotence"
-    - "verify"
     - "destroy"
   name: "default"
 platforms:

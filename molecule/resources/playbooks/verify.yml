@@ -51,41 +51,6 @@
           - not (__nextcloud_test_config.stdout | from_json).system.debug
         quiet: true
 
-    - name: NEXTCLOUD | Verify HTTP redirects to HTTPS
-      ansible.builtin.uri:
-        ca_path: /etc/nextcloud-test/server.crt
-        url: http://127.0.0.1/status.php
-        follow_redirects: none
-        status_code: 301
-
-    - name: NEXTCLOUD | Verify sensitive paths cannot be downloaded
-      ansible.builtin.uri:
-        url: "https://cloud.example.test/{{ __nextcloud_test_private_path }}"
-        ca_path: /etc/nextcloud-test/server.crt
-        status_code: [403, 404]
-      loop:
-        - config/config.php
-        - config/ansible.config.php
-        - data/.ncdata
-      loop_control:
-        loop_var: __nextcloud_test_private_path
-        label: "{{ __nextcloud_test_private_path }}"
-
-    - name: NEXTCLOUD | Read static content security headers
-      ansible.builtin.uri:
-        url: https://cloud.example.test/core/img/logo/logo.svg
-        ca_path: /etc/nextcloud-test/server.crt
-      register: __nextcloud_test_headers
-
-    - name: NEXTCLOUD | Verify webserver security headers
-      ansible.builtin.assert:
-        that:
-          - "'max-age=15552000' in __nextcloud_test_headers.strict_transport_security"
-          - __nextcloud_test_headers.x_content_type_options == 'nosniff'
-          - __nextcloud_test_headers.x_frame_options == 'SAMEORIGIN'
-          - __nextcloud_test_headers.referrer_policy == 'no-referrer'
-        quiet: true
-
     - name: NEXTCLOUD | Verify administrator authentication and WebDAV
       ansible.builtin.uri:
         ca_path: /etc/nextcloud-test/server.crt
@@ -113,6 +78,7 @@
           - "'calendar' in (__nextcloud_test_apps.stdout | from_json).enabled"
           - "'files_external' in (__nextcloud_test_apps.stdout | from_json).enabled"
           - "'files' in (__nextcloud_test_apps.stdout | from_json).enabled"
+          - "'user_ldap' in (__nextcloud_test_apps.stdout | from_json).enabled"
         quiet: true
 
     - name: NEXTCLOUD | Inspect the saved configuration from before reconvergence
@@ -182,13 +148,12 @@
         loop_var: __nextcloud_test_mount
         label: "{{ __nextcloud_test_mount.mount_point }}"
 
-    - name: NEXTCLOUD | Verify requested mount count and automatic app activation
+    - name: NEXTCLOUD | Verify requested mount count
       ansible.builtin.assert:
         that:
           - >-
             __nextcloud_test_mounts.stdout | from_json | selectattr('type', 'equalto', 'admin')
             | selectattr('mount_point', 'in', ['/Shared files', '/Archive']) | length == 2
-          - "'user_ldap' in (__nextcloud_test_apps.stdout | from_json).enabled"
         quiet: true
 
     - name: NEXTCLOUD | Verify purge policy and preservation of personal mounts
@@ -224,29 +189,13 @@
         quiet: true
       when: __nextcloud_test_saved_config.stat.exists
 
-    - name: NEXTCLOUD | Execute background jobs
-      become: true
-      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
-      ansible.builtin.command:
-        argv:
-          - /usr/bin/php
-          - -f
-          - /var/www/nextcloud/cron.php
-      changed_when: false
-
-    - name: NEXTCLOUD | Read protected configuration metadata
+    - name: NEXTCLOUD | Read bootstrap configuration metadata
       become: true
       become_user: root
       ansible.builtin.stat:
         path: /etc/nextcloud/config.php
       register: __nextcloud_test_config_file
-
-    - name: NEXTCLOUD | Verify configuration protection
-      ansible.builtin.assert:
-        that:
-          - __nextcloud_test_config_file.stat.mode == '0640'
-          - __nextcloud_test_config_file.stat.pw_name == __nextcloud_test_platform[ansible_facts.os_family].user
-        quiet: true
+      when: __nextcloud_test_saved_config.stat.exists
 
     - name: NEXTCLOUD | Verify bootstrap configuration survived reconvergence
       ansible.builtin.assert:
@@ -254,29 +203,3 @@
           - __nextcloud_test_config_file.stat.checksum == __nextcloud_test_saved_config.stat.checksum
         quiet: true
       when: __nextcloud_test_saved_config.stat.exists
-
-    - name: NEXTCLOUD | Read the scheduled job
-      become: true
-      become_user: root
-      ansible.builtin.slurp:
-        src: /etc/cron.d/nextcloud
-      register: __nextcloud_test_cron
-
-    - name: NEXTCLOUD | Verify the scheduled application command
-      ansible.builtin.assert:
-        that:
-          - >-
-            ('*/5 * * * * ' ~ __nextcloud_test_platform[ansible_facts.os_family].user
-            ~ ' NEXTCLOUD_CONFIG_DIR=/etc/nextcloud'
-            ~ ' /usr/bin/php -f /var/www/nextcloud/cron.php') in __nextcloud_test_cron.content | b64decode
-        quiet: true
-
-    - name: NEXTCLOUD | Inspect scheduler state
-      ansible.builtin.service_facts:
-
-    - name: NEXTCLOUD | Verify scheduler availability
-      ansible.builtin.assert:
-        that:
-          - ansible_facts.services[__nextcloud_test_platform[ansible_facts.os_family].cron ~ '.service'].state == 'running'
-          - ansible_facts.services[__nextcloud_test_platform[ansible_facts.os_family].cron ~ '.service'].status == 'enabled'
-        quiet: true

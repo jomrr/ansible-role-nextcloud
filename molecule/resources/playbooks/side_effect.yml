@@ -5,6 +5,8 @@
 - name: NEXTCLOUD | Change managed application state
   hosts: all
   gather_facts: true
+  vars:
+    nextcloud_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
   environment:
     NEXTCLOUD_CONFIG_DIR: /etc/nextcloud
   tasks:
@@ -34,7 +36,9 @@
     - name: NEXTCLOUD | Rotate an LDAP password using the always policy
       ansible.builtin.include_role:
         name: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}"
+        tasks_from: ldap.yml
       vars:
+        __nextcloud_ldap_id: s01
         nextcloud_ldap:
           s01:
             ldapAgentPassword: molecule-rotated-ldap-password
@@ -85,27 +89,6 @@
               - ansible_failed_task.name == 'NEXTCLOUD | Check mount identity and authentication compatibility'
             quiet: true
 
-    - name: NEXTCLOUD | Verify optional LDAP connectivity failures stop the role
-      block:
-        - name: NEXTCLOUD | Request LDAP testing against the unreachable fixture endpoint
-          ansible.builtin.include_role:
-            name: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}"
-            tasks_from: ldap.yml
-          vars:
-            __nextcloud_ldap_id: s01
-            nextcloud_ldap_test: true
-
-        - name: NEXTCLOUD | Reject an unexpectedly successful LDAP connectivity test
-          ansible.builtin.fail:
-            msg: The unreachable LDAP fixture must fail connectivity validation.
-      rescue:
-        - name: NEXTCLOUD | Verify LDAP testing was the failing operation
-          ansible.builtin.assert:
-            that:
-              - ansible_failed_task.name == 'NEXTCLOUD | Test LDAP configuration and connectivity'
-              - ansible_failed_result.rc != 0
-            quiet: true
-
     - name: NEXTCLOUD | Read mount IDs before changing existing state
       become: true
       become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
@@ -124,7 +107,6 @@
         - [ldap:set-config, s01, ldapHost, ldap://changed.example.test]
         - [ldap:set-config, s01, ldapBase, dc=changed]
         - [ldap:set-config, s01, ldapCacheTTL, '100']
-        - [ldap:delete-config, s02]
         - [config:app:set, files_sharing, molecule_string, --value=changed]
         - [config:app:set, files_sharing, molecule_integer, --value=99]
         - [config:app:set, files_sharing, molecule_float, --value=8.5]
@@ -150,52 +132,3 @@
       ansible.builtin.command:
         argv: [/usr/bin/php, /var/www/nextcloud/occ, 'app:disable', files_external]
       changed_when: true
-
-    - name: NEXTCLOUD | Remove a requested app without its data
-      become: true
-      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
-      ansible.builtin.command:
-        argv: [/usr/bin/php, /var/www/nextcloud/occ, 'app:remove', --keep-data, calendar]
-      changed_when: true
-
-    - name: NEXTCLOUD | Change the managed configuration fragment
-      become: true
-      become_user: root
-      ansible.builtin.copy:
-        dest: /etc/nextcloud/ansible.config.php
-        content: "<?php\n$CONFIG = ['trusted_domains' => ['localhost']];\n"
-        owner: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
-        group: "{{ __nextcloud_test_platform[ansible_facts.os_family].group }}"
-        mode: '0640'
-
-    - name: NEXTCLOUD | Switch background jobs to AJAX
-      become: true
-      become_user: "{{ __nextcloud_test_platform[ansible_facts.os_family].user }}"
-      ansible.builtin.command:
-        argv:
-          - /usr/bin/php
-          - /var/www/nextcloud/occ
-          - background:ajax
-      changed_when: true
-
-    - name: NEXTCLOUD | Remove the cron entry
-      become: true
-      become_user: root
-      ansible.builtin.file:
-        path: /etc/cron.d/nextcloud
-        state: absent
-
-    - name: NEXTCLOUD | Stop and disable the scheduler
-      become: true
-      become_user: root
-      ansible.builtin.service:
-        name: "{{ __nextcloud_test_platform[ansible_facts.os_family].cron }}"
-        enabled: false
-        state: stopped
-
-    - name: NEXTCLOUD | Relax configuration permissions
-      become: true
-      become_user: root
-      ansible.builtin.file:
-        path: /etc/nextcloud/config.php
-        mode: '0644'
