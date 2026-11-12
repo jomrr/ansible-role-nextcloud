@@ -129,7 +129,6 @@ argument_specs:
         type: dict
         default:
           debug: false
-        no_log: true
         description:
           - Additional Nextcloud system settings using JSON-compatible values, including
             Redis, mail and proxy settings.
@@ -151,7 +150,6 @@ argument_specs:
       nextcloud_ldap:
         type: dict
         default: {}
-        no_log: true
         description:
           - Mapping of configuration IDs such as s01 to user_ldap keys and values; enables
             user_ldap when nonempty.
@@ -203,13 +201,11 @@ argument_specs:
           configuration:
             type: dict
             default: {}
-            no_log: true
             description: Backend and authentication parameters; supplied keys are managed,
               omitted keys are preserved.
           options:
             type: dict
             default: {}
-            no_log: true
             description: Mount options using JSON-compatible values; omitted keys are preserved.
           applicable_users:
             type: list
@@ -233,7 +229,6 @@ argument_specs:
       nextcloud_app_config:
         type: dict
         default: {}
-        no_log: true
         description:
           - Mapping of app IDs to configuration keys and JSON-compatible values, compared
             with config:list and set with config:app:set.
